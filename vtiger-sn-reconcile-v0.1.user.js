@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         VTiger SN Reconciliation (Delta Mode FIX)
+// @name         VTiger SN Reconciliation (Delta Mode v0.3.2)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.3.1
-// @description  Delta-based SN reconciliation with strict assignment logic, mandatory dialog on ambiguity, readable UI and undo
+// @version      0.3.2
+// @description  Delta-based SN reconciliation with explicit keep/remove/add logic, mandatory assignment dialog, readable UI and undo
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -83,10 +83,7 @@
     const d = getDescField(row);
     if (!d) return null;
     const p = parseDesc(d.value);
-    return [
-      p.ss || '',
-      p.se || ''
-    ].join('|');
+    return [p.ss || '', p.se || ''].join('|');
   }
 
   /* ===============================
@@ -128,14 +125,14 @@
     p.style.cssText = `
       position:fixed;right:16px;bottom:16px;z-index:2147483647;
       background:#111;color:#eee;padding:12px;border-radius:10px;
-      width:380px;font:13px/1.4 system-ui,Segoe UI,Roboto,Arial;
+      width:400px;font:13px/1.4 system-ui,Segoe UI,Roboto,Arial;
       box-shadow:0 6px 20px rgba(0,0,0,.35)
     `;
 
     p.innerHTML = `
       <b>SN Abgleich (Delta)</b><br><br>
 
-      <label style="color:#9fdf9f">🟢 Behalten</label>
+      <label style="color:#9fdf9f">🟢 Behalten (Validierung)</label>
       <textarea id="sn-keep"></textarea>
 
       <label style="color:#ff9f9f">🔴 Entfernen</label>
@@ -173,7 +170,61 @@
   }
 
   /* ===============================
-     CORE LOGIC (FIXED)
+     ASSIGNMENT DIALOG
+     =============================== */
+  function assignmentDialog(snList, groups, onAssign) {
+    const dlg = document.createElement('div');
+    dlg.style.cssText = `
+      position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      background:#111;color:#eee;padding:14px;border-radius:10px;
+      z-index:2147483647;width:520px;max-height:80vh;overflow:auto;
+      box-shadow:0 8px 30px rgba(0,0,0,.5)
+    `;
+
+    dlg.innerHTML = `<b>Neue Seriennummern zuordnen</b><br><br>`;
+
+    dlg.innerHTML += `<div><b>Seriennummern:</b><br>${snList.join(', ')}</div><br>`;
+
+    dlg.innerHTML += `<div><b>Zielprodukt wählen:</b></div>`;
+    groups.forEach((g, i) => {
+      dlg.innerHTML += `
+        <label style="display:block;margin:6px 0">
+          <input type="radio" name="sn-target" value="${i}">
+          Produkt ${i + 1} – ${g.key.replace('|',' → ')}
+        </label>
+      `;
+    });
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'margin-top:10px;display:flex;gap:8px';
+
+    const ok = document.createElement('button');
+    ok.textContent = 'Zuordnen';
+    ok.onclick = () => {
+      const sel = dlg.querySelector('input[name="sn-target"]:checked');
+      if (!sel) return alert('Bitte ein Zielprodukt auswählen');
+      onAssign(groups[Number(sel.value)]);
+      dlg.remove();
+    };
+
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Abbrechen';
+    cancel.onclick = () => dlg.remove();
+
+    [ok, cancel].forEach(b => {
+      b.style.cssText =
+        'flex:1;background:#2b2b2b;color:#fff;border:1px solid #444;' +
+        'border-radius:8px;padding:6px;cursor:pointer';
+    });
+
+    btnRow.appendChild(ok);
+    btnRow.appendChild(cancel);
+    dlg.appendChild(btnRow);
+    document.body.appendChild(dlg);
+  }
+
+  /* ===============================
+     CORE LOGIC
      =============================== */
   function applyDelta() {
     const keep = splitList(document.getElementById('sn-keep').value);
@@ -183,57 +234,61 @@
     snapshot();
 
     const rows = getRows();
-
-    // Build product groups
-    const groups = rows.map(r => ({
-      row: r,
-      key: getMetaKey(r),
-      desc: getDescField(r),
-      qty: getQtyField(r)
-    })).filter(g => g.key && g.desc);
-
-    // Apply KEEP / REMOVE per row
-    groups.forEach(g => {
-      const parsed = parseDesc(g.desc.value);
+    const groups = rows.map(r => {
+      const d = getDescField(r);
+      const q = getQtyField(r);
+      const parsed = d ? parseDesc(d.value) : null;
       let sns = [];
 
-      if (parsed.snLine) {
+      if (parsed && parsed.snLine) {
         sns = parsed.snLine.replace(/^s\/?n\s*:/i, '')
           .split(',').map(x => S(x)).filter(Boolean);
       }
 
+      // REMOVE only
       sns = sns.filter(sn => !remove.includes(sn));
-      if (keep.length) sns = sns.filter(sn => keep.includes(sn));
 
-      g.sns = sns;
-    });
+      return {
+        row: r,
+        desc: d,
+        qty: q,
+        parsed,
+        sns,
+        key: getMetaKey(r)
+      };
+    }).filter(g => g.desc && g.key);
 
-    // ADD logic: strict
-    for (const sn of add) {
-      const matching = groups.filter(g => true); // same meta group only
-      if (matching.length === 1) {
-        matching[0].sns.push(sn);
-      } else {
-        // Ambiguous or none → dialog
-        return alert(
-          'Zuordnung erforderlich für neue Seriennummer:\n' +
-          sn +
-          '\n(Mehrere oder keine passenden Produkte)'
-        );
-      }
+    // Validate KEEP (no deletion)
+    const allSN = groups.flatMap(g => g.sns);
+    const missingKeep = keep.filter(sn => !allSN.includes(sn));
+    if (missingKeep.length) {
+      alert(
+        'Warnung:\nFolgende Seriennummern aus "Behalten" fehlen:\n' +
+        missingKeep.join(', ')
+      );
     }
 
-    // Write back
+    // ADD: strict assignment
+    if (add.length) {
+      assignmentDialog(add, groups, target => {
+        target.sns.push(...add);
+        writeBack(groups);
+      });
+    } else {
+      writeBack(groups);
+    }
+  }
+
+  function writeBack(groups) {
     groups.forEach(g => {
-      g.desc.value = buildDesc(g.sns, parseDesc(g.desc.value));
+      g.desc.value = buildDesc(g.sns, g.parsed);
       fire(g.desc);
       if (g.qty) {
         g.qty.value = String(g.sns.length);
         fire(g.qty);
       }
     });
-
-    alert('SN-Abgleich abgeschlossen (v0.3.1 FIX)');
+    alert('SN-Abgleich abgeschlossen (v0.3.2)');
   }
 
   /* ===============================
