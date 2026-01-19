@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.0.1
-// @description  Auto-run line item meta overlay in Edit mode with toggle, status badge, vendor colors and mixed-vendor warning; button-only in Detail view
+// @version      1.0.2
+// @description  Auto-run line item meta overlay in Edit mode with toggle, status badge, vendor colors and mixed-vendor warning; button-only in Detail view. Meta data is always fetched live.
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -53,8 +53,7 @@
      UTILITIES
      =============================== */
 
-  const LSKEY = '__vt_meta_cache_v3';
-  const mem = new Map();
+  const mem = new Map(); // in-memory cache per page load only
 
   const S = s => (s || '').toString().trim();
   const debounce = (fn, ms) => {
@@ -65,29 +64,13 @@
     };
   };
 
-  function getLS() {
-    try { return JSON.parse(localStorage.getItem(LSKEY) || '{}'); }
-    catch { return {}; }
-  }
-  function setLS(k, v) {
-    const c = getLS();
-    c[k] = v;
-    localStorage.setItem(LSKEY, JSON.stringify(c));
-  }
-
   /* ===============================
-     META FETCH
+     META FETCH (ALWAYS LIVE)
      =============================== */
 
   async function fetchMeta(url) {
     if (!url) return {};
     if (mem.has(url)) return mem.get(url);
-
-    const ls = getLS();
-    if (ls[url]) {
-      mem.set(url, ls[url]);
-      return ls[url];
-    }
 
     try {
       const r = await fetch(url, { credentials: 'same-origin' });
@@ -110,8 +93,7 @@
         country: getVal('country')
       };
 
-      mem.set(url, meta);
-      setLS(url, meta);
+      mem.set(url, meta); // cache only for this page load
       return meta;
     } catch {
       return {};
