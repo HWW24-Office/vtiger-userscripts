@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.6.0
-// @description  SN-Abgleich im Edit-Modus: Behalten = Soll-Liste (nur Prüfung), Entfernen = einzige Löschquelle, Hinzufügen = Dialog mit Mehrfach-Zuordnung, Preview & Undo
+// @version      0.7.0
+// @description  SN-Abgleich im Edit-Modus mit sicherer Behalten/Entfernen-Logik, Hinzufügen-Zuordnungsdialog, Preview und Undo
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -16,6 +16,60 @@
     /module=(Quotes|SalesOrder|Invoice|PurchaseOrder)/.test(location.href);
   if (!isEdit) return;
 
+  /* =========================
+     HARD CSS RESET (FINAL)
+     ========================= */
+  const css = document.createElement('style');
+  css.textContent = `
+    .hw24-sn-panel, .hw24-sn-panel * {
+      box-sizing: border-box !important;
+      color: #fff !important;
+      background: #111 !important;
+      font-family: system-ui,Segoe UI,Roboto,Arial !important;
+    }
+    .hw24-sn-panel textarea,
+    .hw24-sn-panel button {
+      background:#fff !important;
+      color:#111 !important;
+      border:1px solid #444 !important;
+    }
+    .hw24-sn-dialog,
+    .hw24-sn-dialog * {
+      color:#111 !important;
+      background:#fff !important;
+    }
+    .hw24-sn-dialog {
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.6) !important;
+      z-index:2147483647;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .hw24-sn-dialog .box {
+      background:#fff !important;
+      color:#111 !important;
+      padding:16px;
+      border-radius:10px;
+      width:90%;
+      max-width:1000px;
+      max-height:80vh;
+      overflow:auto;
+    }
+    .hw24-sn-prod {
+      border:1px solid #ccc;
+      border-radius:8px;
+      padding:8px;
+      margin:4px;
+    }
+    .hw24-sn-snrow {
+      border-bottom:1px dashed #ccc;
+      padding:6px 0;
+    }
+  `;
+  document.head.appendChild(css);
+
   /* ================= Utilities ================= */
 
   const S = s => (s || '').toString().trim();
@@ -28,7 +82,7 @@
     ['input','change','blur'].forEach(e=>el.dispatchEvent(new Event(e,{bubbles:true})));
   }
 
-  /* ================= Read current line items ================= */
+  /* ================= Line Items ================= */
 
   function getLineItems(){
     const rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"], tr.inventoryRow')];
@@ -38,8 +92,7 @@
         tr.querySelector('textarea[name*="comment"], textarea[name*="description"]') ||
         tr.querySelector('input[name*="comment"], input[name*="description"]');
 
-      const desc = S(descEl?.value || descEl?.textContent || '');
-
+      const desc = S(descEl?.value || '');
       const snMatch = desc.match(/S\/N\s*:\s*([^\n\r]+)/i);
       const sns = snMatch ? parseList(snMatch[1]) : [];
 
@@ -55,52 +108,7 @@
     });
   }
 
-  /* ================= UI Panel ================= */
-
-  function addPanel(){
-    if(document.getElementById('sn-reconcile-panel')) return;
-
-    const p = document.createElement('div');
-    p.id = 'sn-reconcile-panel';
-    p.style.cssText = `
-      position:fixed; bottom:16px; left:16px; z-index:2147483647;
-      background:#111; color:#fff; padding:12px; border-radius:10px;
-      box-shadow:0 6px 18px rgba(0,0,0,.35); width:340px;
-      font:13px/1.35 system-ui,Segoe UI,Roboto,Arial;
-    `;
-
-    p.innerHTML = `
-      <b>SN-Abgleich</b>
-      <div style="margin-top:8px">
-        <label>Behalten (Soll-Liste)</label>
-        <textarea id="sn-keep" style="width:100%;height:60px"></textarea>
-      </div>
-      <div>
-        <label>Entfernen</label>
-        <textarea id="sn-remove" style="width:100%;height:60px"></textarea>
-      </div>
-      <div>
-        <label>Hinzufügen</label>
-        <textarea id="sn-add" style="width:100%;height:60px"></textarea>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button id="sn-preview">Preview</button>
-        <button id="sn-apply">Apply</button>
-        <button id="sn-undo" disabled>Undo</button>
-      </div>
-      <div id="sn-msg" style="margin-top:8px;color:#ffd966"></div>
-    `;
-
-    p.querySelectorAll('button').forEach(b=>{
-      b.style.cssText='flex:1;cursor:pointer';
-    });
-
-    document.body.appendChild(p);
-  }
-
-  addPanel();
-
-  /* ================= Core Logic ================= */
+  /* ================= Panel ================= */
 
   let SNAPSHOT = null;
 
@@ -125,104 +133,143 @@
     });
   }
 
-  function buildIndex(items){
-    const map = new Map();
-    items.forEach(it=>{
-      it.sns.forEach(sn=>{
-        if(!map.has(sn)) map.set(sn,[]);
-        map.get(sn).push(it);
-      });
-    });
-    return map;
+  function addPanel(){
+    if(document.getElementById('hw24-sn-panel')) return;
+    const p = document.createElement('div');
+    p.id = 'hw24-sn-panel';
+    p.className = 'hw24-sn-panel';
+    p.style.cssText = `
+      position:fixed;
+      bottom:16px;
+      left:16px;
+      width:340px;
+      padding:12px;
+      border-radius:10px;
+      z-index:2147483646;
+      box-shadow:0 6px 18px rgba(0,0,0,.35);
+    `;
+    p.innerHTML = `
+      <b>SN-Abgleich</b>
+      <label>Behalten (Soll)</label>
+      <textarea id="sn-keep" style="width:100%;height:50px"></textarea>
+      <label>Entfernen</label>
+      <textarea id="sn-remove" style="width:100%;height:50px"></textarea>
+      <label>Hinzufügen</label>
+      <textarea id="sn-add" style="width:100%;height:50px"></textarea>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button id="sn-preview">Preview</button>
+        <button id="sn-apply">Apply</button>
+        <button id="sn-undo" disabled>Undo</button>
+      </div>
+      <div id="sn-msg" style="margin-top:6px;color:#ffd966"></div>
+    `;
+    document.body.appendChild(p);
   }
 
-  function showMsg(t){ document.getElementById('sn-msg').textContent = t; }
+  addPanel();
 
   /* ================= Preview ================= */
 
   document.getElementById('sn-preview').onclick = ()=>{
     const items = getLineItems();
-    const idx = buildIndex(items);
+    const idx = new Map();
+    items.forEach(it=>it.sns.forEach(sn=>{
+      if(!idx.has(sn)) idx.set(sn,[]);
+      idx.get(sn).push(it.prodName);
+    }));
 
     const keep = parseList(document.getElementById('sn-keep').value);
     const rem  = parseList(document.getElementById('sn-remove').value);
     const add  = parseList(document.getElementById('sn-add').value);
 
-    const conflicts = keep.filter(sn=>rem.includes(sn) || add.includes(sn));
-    const missingKeep = keep.filter(sn=>!idx.has(sn));
-    const multi = [...idx.entries()].filter(([sn,arr])=>arr.length>1).map(([sn])=>sn);
+    const conflicts = keep.filter(sn=>rem.includes(sn)||add.includes(sn));
+    const missing = keep.filter(sn=>!idx.has(sn));
+    const multi = [...idx.entries()].filter(e=>e[1].length>1).map(e=>e[0]);
 
-    let msg = [];
-    if(conflicts.length) msg.push(`Konflikt (Behalten vs Entfernen/Hinzufügen): ${conflicts.join(', ')}`);
-    if(missingKeep.length) msg.push(`Soll-SN fehlen im Angebot: ${missingKeep.join(', ')}`);
-    if(multi.length) msg.push(`SN mehrfach vorhanden: ${multi.join(', ')}`);
+    let msg=[];
+    if(conflicts.length) msg.push(`Konflikt: ${conflicts.join(', ')}`);
+    if(missing.length) msg.push(`Fehlen im Angebot: ${missing.join(', ')}`);
+    if(multi.length) msg.push(`Mehrfach vorhanden: ${multi.join(', ')}`);
+    if(!msg.length) msg.push('Preview OK');
 
-    if(!msg.length) msg.push('Preview OK – keine Konflikte erkannt.');
-    showMsg(msg.join(' | '));
+    document.getElementById('sn-msg').textContent = msg.join(' | ');
   };
+
+  /* ================= Hinzufügen Dialog ================= */
+
+  function openAddDialog(addList, items){
+    const dlg = document.createElement('div');
+    dlg.className='hw24-sn-dialog';
+    const box = document.createElement('div');
+    box.className='box';
+
+    box.innerHTML = `<h3>Seriennummern zuordnen</h3>`;
+    addList.forEach(sn=>{
+      const row = document.createElement('div');
+      row.className='hw24-sn-snrow';
+      row.innerHTML = `<b>${sn}</b>`;
+      items.forEach(it=>{
+        const lbl = document.createElement('label');
+        lbl.style.marginLeft='12px';
+        lbl.innerHTML = `
+          <input type="radio" name="sn_${sn}" value="${it.rn}">
+          ${it.prodName}
+        `;
+        row.appendChild(lbl);
+      });
+      box.appendChild(row);
+    });
+
+    const ok = document.createElement('button');
+    ok.textContent='Übernehmen';
+    ok.onclick=()=>{
+      addList.forEach(sn=>{
+        const sel = box.querySelector(`input[name="sn_${sn}"]:checked`);
+        if(!sel) return;
+        const it = items.find(x=>x.rn===sel.value);
+        if(it && !it.sns.includes(sn)) it.sns.push(sn);
+      });
+      dlg.remove();
+    };
+    box.appendChild(ok);
+    dlg.appendChild(box);
+    document.body.appendChild(dlg);
+  }
 
   /* ================= Apply ================= */
 
   document.getElementById('sn-apply').onclick = ()=>{
     const items = getLineItems();
-    const idx = buildIndex(items);
+    SNAPSHOT = snapshot(items);
+    document.getElementById('sn-undo').disabled=false;
 
     const keep = parseList(document.getElementById('sn-keep').value);
     const rem  = parseList(document.getElementById('sn-remove').value);
     const add  = parseList(document.getElementById('sn-add').value);
 
-    const conflicts = uniq([
-      ...keep.filter(sn=>rem.includes(sn)),
-      ...keep.filter(sn=>add.includes(sn))
-    ]);
-
-    // Block conflicting SNs
-    const blocked = new Set(conflicts);
-
-    SNAPSHOT = snapshot(items);
-    document.getElementById('sn-undo').disabled = false;
-
-    /* --- Entfernen: einzige Löschquelle --- */
-    rem.forEach(sn=>{
-      if(blocked.has(sn)) return;
-      const rows = idx.get(sn);
-      if(!rows) return;
-      rows.forEach(it=>{
-        it.sns = it.sns.filter(x=>x!==sn);
-      });
+    // Entfernen
+    items.forEach(it=>{
+      it.sns = it.sns.filter(sn=>!rem.includes(sn));
     });
 
-    /* --- Hinzufügen: Dialog erforderlich --- */
-    const addCandidates = add.filter(sn=>!idx.has(sn) && !blocked.has(sn));
-    if(addCandidates.length){
-      alert(
-        'Neue Seriennummern müssen zugeordnet werden:\n\n' +
-        addCandidates.join('\n') +
-        '\n\nBitte Produkt manuell hinzufügen und danach erneut ausführen.'
-      );
+    // Hinzufügen Dialog
+    if(add.length){
+      openAddDialog(add, items);
     }
 
-    /* --- Write back descriptions & qty --- */
+    // Write back
     items.forEach(it=>{
       const snLine = it.sns.length ? `S/N: ${it.sns.join(', ')}` : '';
-      let rest = it.desc
-        .replace(/S\/N\s*:[^\n\r]+/i,'')
-        .trim();
-
-      let parts = [];
-      if(snLine) parts.push(snLine);
-      if(rest) parts.push(rest);
-
-      it.descEl.value = parts.join('\n');
+      let rest = it.desc.replace(/S\/N\s*:[^\n\r]+/i,'').trim();
+      it.descEl.value = [snLine,rest].filter(Boolean).join('\n');
       fire(it.descEl);
-
       if(it.qtyEl){
-        it.qtyEl.value = it.sns.length || 0;
+        it.qtyEl.value = it.sns.length;
         fire(it.qtyEl);
       }
     });
 
-    showMsg('Apply abgeschlossen.');
+    document.getElementById('sn-msg').textContent='Apply durchgeführt';
   };
 
   /* ================= Undo ================= */
@@ -230,7 +277,7 @@
   document.getElementById('sn-undo').onclick = ()=>{
     if(!SNAPSHOT) return;
     restore(SNAPSHOT);
-    showMsg('Undo durchgeführt.');
+    document.getElementById('sn-msg').textContent='Undo durchgeführt';
   };
 
 })();
