@@ -2,6 +2,8 @@
 // @name         VTiger SalesOrder Helper Button
 // @namespace    hw24.salesorder.helper
 // @version      1.4.0
+// @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/salesorder-autofill.user.js
+// @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/salesorder-autofill.user.js
 // @description  Autofill für POP, Status, Reverse Charge & Produktdaten
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
