@@ -7,6 +7,4 @@
 // @grant        none
 // @run-at       document-end
 // @require      https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-product-number-tools.user.js
-// @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-product-number-tools.user.js
-// @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-product-number-tools.user.js
 // ==/UserScript==
