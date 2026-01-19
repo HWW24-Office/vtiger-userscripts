@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger Product Number Tools
 // @namespace    hw24.vtiger.product.numbertools
-// @version      1.0.1
-// @description  Bulk multiply/divide Purchase Cost, Unit Price and Duration in months in vtiger Products edit view
+// @version      1.0.2
+// @description  Bulk multiply/divide Purchase Cost, Unit Price and Duration in months with undo support
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -11,7 +11,6 @@
 (function () {
   'use strict';
 
-  // Nur Produkte im Edit-Modus
   if (
     !location.href.includes('module=Products') ||
     !location.href.includes('view=Edit')
@@ -20,11 +19,10 @@
   const ID = 'vtNumToolsPanel';
   if (document.getElementById(ID)) return;
 
-  /* ========= Ziel-Felder ========= */
   const TARGET_SELECTORS = [
-    '#Products-editview-fieldname-unit_price', // Unit Price
-    'input[name="purchase_cost"]',             // Purchase Cost (Fallback)
-    'input[name="cf_1203"]'                     // Duration in months
+    '#Products-editview-fieldname-unit_price',
+    'input[name="purchase_cost"]',
+    'input[name="cf_1203"]'
   ];
 
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -32,7 +30,7 @@
     e.dispatchEvent(new Event(t, { bubbles: true }))
   );
 
-  /* ========= CSS ========= */
+  /* ===== CSS ===== */
   const css = `
 #${ID}{position:fixed;z-index:999999;top:12px;right:12px;max-width:380px;background:#111;border:1px solid #444;color:#fff;font:13px/1.35 system-ui;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
 #${ID} header{display:flex;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #333}
@@ -47,7 +45,7 @@
   style.textContent = css;
   document.head.appendChild(style);
 
-  /* ========= Panel ========= */
+  /* ===== Panel ===== */
   const panel = document.createElement('div');
   panel.id = ID;
   panel.innerHTML = `
@@ -59,14 +57,15 @@
   <div id="vtNTList"></div>
 </div>
 <div class="foot">
-  <input id="vtNTExpr" type="text" placeholder="z. B. *1.77 oder /2" style="width:160px">
+  <input id="vtNTExpr" type="text" placeholder="z. B. *1.77 oder /2" style="width:150px">
   <button data-act="apply">Anwenden</button>
+  <button data-act="undo">Undo</button>
   <span class="pill" id="vtNTInfo">0 geändert</span>
 </div>`;
   document.body.appendChild(panel);
   document.getElementById('vtNTClose').onclick = () => panel.remove();
 
-  /* ========= Felder sammeln ========= */
+  /* ===== Felder sammeln ===== */
   const targets = TARGET_SELECTORS.flatMap(sel => $$(sel))
     .filter(el => el && !el.readOnly && !el.disabled);
 
@@ -75,6 +74,7 @@
 
   targets.forEach(el => {
     const orig = el.value;
+
     const row = document.createElement('div');
     row.className = 'row';
 
@@ -92,10 +92,14 @@
     row.append(cb, label, peek);
     listEl.appendChild(row);
 
-    items.push({ el, cb, peek, orig });
+    items.push({
+      el,
+      cb,
+      peek,
+      orig
+    });
   });
 
-  /* ========= Logik ========= */
   const info = document.getElementById('vtNTInfo');
 
   const parseExpr = s => {
@@ -107,6 +111,7 @@
     return Number.isFinite(n) ? (div ? 1 / n : n) : null;
   };
 
+  /* ===== Apply ===== */
   panel.querySelector('[data-act="apply"]').onclick = () => {
     const f = parseExpr(document.getElementById('vtNTExpr').value);
     if (f === null) return alert('Ungültiger Ausdruck');
@@ -123,5 +128,18 @@
       changed++;
     });
     info.textContent = `${changed} geändert`;
+  };
+
+  /* ===== Undo ===== */
+  panel.querySelector('[data-act="undo"]').onclick = () => {
+    let restored = 0;
+    items.forEach(it => {
+      if (!it.cb.checked) return;
+      it.el.value = it.orig;
+      it.peek.value = it.orig;
+      fire(it.el);
+      restored++;
+    });
+    info.textContent = `${restored} zurückgesetzt`;
   };
 })();
