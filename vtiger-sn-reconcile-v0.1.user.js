@@ -1,14 +1,14 @@
 // ==UserScript==
-// @name         VTiger SN Reconciliation (Delta Mode v0.3.3)
+// @name         VTiger SN Reconciliation (Delta Mode v0.3.4)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.3.3
-// @description  Delta-based SN reconciliation with batch assignment dialog, multi-product mapping, readable UI and undo
+// @version      0.3.4
+// @description  Delta-based SN reconciliation with conflict detection and product-based SLA/Country matching
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
 
-(function () {
+(async function () {
   'use strict';
 
   /* ===============================
@@ -23,15 +23,44 @@
      UTILS
      =============================== */
   const S = s => (s || '').toString().trim();
-  const splitList = s => S(s).split(/[\n,]+/).map(x => S(x)).filter(Boolean);
-  const fire = el => el && ['input','change','blur'].forEach(e=>el.dispatchEvent(new Event(e,{bubbles:true})));
+  const splitList = s => S(s).split(/[\n,]+/).map(S).filter(Boolean);
+  const fire = el => el && ['input','change','blur']
+    .forEach(e=>el.dispatchEvent(new Event(e,{bubbles:true})));
+
+  /* ===============================
+     PRODUCT META CACHE (SLA, COUNTRY)
+     =============================== */
+  const META_CACHE = {};
+  async function fetchProductMeta(productId){
+    if(META_CACHE[productId]) return META_CACHE[productId];
+    try{
+      const url = `index.php?module=Products&view=Detail&record=${productId}`;
+      const html = await fetch(url,{credentials:'same-origin'}).then(r=>r.text());
+      const doc = new DOMParser().parseFromString(html,'text/html');
+      const pick = lbl => {
+        const lab=[...doc.querySelectorAll('[id^="Products_detailView_fieldLabel_"]')]
+          .find(l=>S(l.textContent).toLowerCase()===lbl);
+        if(!lab) return '';
+        const v=doc.getElementById(lab.id.replace('fieldLabel','fieldValue'));
+        return S(v?.textContent);
+      };
+      const meta = {
+        sla: pick('sla'),
+        country: pick('country'),
+        manufacturer: pick('manufacturer')
+      };
+      META_CACHE[productId]=meta;
+      return meta;
+    }catch{
+      return {sla:'',country:'',manufacturer:''};
+    }
+  }
 
   /* ===============================
      DESCRIPTION PARSER / BUILDER
-     Order: S/N -> rest -> Service Start -> Service End
      =============================== */
   function parseDesc(desc){
-    const lines = S(desc).split(/\r?\n/);
+    const lines=S(desc).split(/\r?\n/);
     let snLine='', ss='', se=''; const rest=[];
     for(const l of lines){
       if(/^s\/?n\s*:/i.test(l)) snLine=l;
@@ -39,69 +68,52 @@
       else if(/^service\s*(ende|end)\s*:/i.test(l)) se=l;
       else rest.push(l);
     }
-    return {snLine, ss, se, rest};
+    return {snLine,ss,se,rest};
   }
-  function buildDesc(snList, parsed){
+  function buildDesc(snList,p){
     const out=[];
     if(snList.length) out.push('S/N: '+snList.join(', '));
-    out.push(...parsed.rest.filter(Boolean));
-    if(parsed.ss) out.push(parsed.ss);
-    if(parsed.se) out.push(parsed.se);
+    out.push(...p.rest.filter(Boolean));
+    if(p.ss) out.push(p.ss);
+    if(p.se) out.push(p.se);
     return out.join('\n');
   }
 
   /* ===============================
      LINE ITEMS
      =============================== */
-  function getRows(){
+  function rows(){
     return [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
   }
-  function getDescField(r){
+  function descField(r){
     return r.querySelector("textarea[name*='comment'],textarea[name*='description']");
   }
-  function getQtyField(r){
+  function qtyField(r){
     return r.querySelector("input[name^='qty']");
   }
-  function getProductName(r){
-    const rn = r.getAttribute('data-row-num') || r.id.replace('row','');
-    const el = r.querySelector('#productName'+rn) || r.querySelector('input[id^="productName"]');
-    return S(el ? (el.value||el.textContent) : '');
+  function productId(r){
+    return r.querySelector("input[name*='productid']")?.value||'';
   }
-  function getCountry(r){
-    const d = getDescField(r); if(!d) return '';
-    const m = S(d.value).match(/country\s*:\s*([^\n]+)/i);
-    return m?S(m[1]):'';
-  }
-  function getSLA(r){
-    const d = getDescField(r); if(!d) return '';
-    const m = S(d.value).match(/sla\s*:\s*([^\n]+)/i);
-    return m?S(m[1]):'';
-  }
-  function getDates(r){
-    const d = getDescField(r); if(!d) return {ss:'',se:''};
-    const ss = (S(d.value).match(/^service\s*start\s*:\s*(.+)$/im)||[])[1]||'';
-    const se = (S(d.value).match(/^service\s*(?:ende|end)\s*:\s*(.+)$/im)||[])[1]||'';
-    return {ss:S(ss), se:S(se)};
-  }
-  function groupKey(r){
-    const {ss,se}=getDates(r);
-    return [getProductName(r), getSLA(r), getCountry(r), ss, se].join('||');
+  function productName(r){
+    const rn=r.getAttribute('data-row-num')||r.id.replace('row','');
+    const el=r.querySelector('#productName'+rn)||r.querySelector("input[id^='productName']");
+    return S(el?.value||el?.textContent);
   }
 
   /* ===============================
-     STATE (UNDO)
+     UNDO
      =============================== */
   let SNAPSHOT=null;
   function snapshot(){
-    SNAPSHOT=getRows().map(r=>{
-      const d=getDescField(r), q=getQtyField(r);
-      return {r, d:d?d.value:'', q:q?q.value:''};
+    SNAPSHOT=rows().map(r=>{
+      const d=descField(r), q=qtyField(r);
+      return {r, d:d?.value||'', q:q?.value||''};
     });
   }
   function undo(){
     if(!SNAPSHOT) return alert('Kein Undo verfügbar');
     SNAPSHOT.forEach(s=>{
-      const d=getDescField(s.r), q=getQtyField(s.r);
+      const d=descField(s.r), q=qtyField(s.r);
       if(d){d.value=s.d; fire(d);}
       if(q){q.value=s.q; fire(q);}
     });
@@ -109,9 +121,9 @@
   }
 
   /* ===============================
-     UI PANEL
+     PANEL
      =============================== */
-  function addPanel(){
+  function panel(){
     if(document.getElementById('hw24-sn-panel')) return;
     const p=document.createElement('div');
     p.id='hw24-sn-panel';
@@ -123,7 +135,7 @@
     `;
     p.innerHTML=`
       <b>SN Abgleich (Delta)</b><br><br>
-      <label style="color:#9fdf9f">🟢 Behalten (Validierung)</label>
+      <label style="color:#9fdf9f">🟢 Behalten</label>
       <textarea id="sn-keep"></textarea>
       <label style="color:#ff9f9f">🔴 Entfernen</label>
       <textarea id="sn-remove"></textarea>
@@ -133,10 +145,6 @@
         <button id="sn-apply">🔍 Anwenden</button>
         <button id="sn-undo">↩ Undo</button>
       </div>
-      <div style="margin-top:8px;font-size:11px;opacity:.85">
-        <b>Legende</b><br>
-        🟢 OK · 🔴 Entfernt · 🔵 Neu · 🟣 Mehrfach · ⚠ Produkt fehlt
-      </div>
     `;
     p.querySelectorAll('textarea').forEach(t=>{
       t.style.cssText='width:100%;height:60px;background:#0f0f0f;color:#f1f1f1;border:1px solid #444;border-radius:6px;margin-bottom:6px';
@@ -145,136 +153,67 @@
       b.style.cssText='flex:1;background:#2b2b2b;color:#fff;border:1px solid #444;border-radius:8px;padding:6px;cursor:pointer';
     });
     document.body.appendChild(p);
-    p.querySelector('#sn-apply').onclick=applyDelta;
+    p.querySelector('#sn-apply').onclick=apply;
     p.querySelector('#sn-undo').onclick=undo;
-  }
-
-  /* ===============================
-     ASSIGNMENT DIALOG (BATCH)
-     =============================== */
-  function assignmentDialog(snPool, groups, onDone){
-    let remaining=[...snPool];
-    const parked=[];
-
-    const dlg=document.createElement('div');
-    dlg.style.cssText=`
-      position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-      background:#111;color:#eee;padding:14px;border-radius:10px;
-      z-index:2147483647;width:640px;max-height:80vh;overflow:auto;
-      box-shadow:0 8px 30px rgba(0,0,0,.5)
-    `;
-
-    function render(){
-      dlg.innerHTML=`<b>Neue Seriennummern zuordnen</b><br><br>`;
-      dlg.innerHTML+=`<div><b>Seriennummern (mehrfach auswählbar):</b></div>`;
-      remaining.forEach(sn=>{
-        dlg.innerHTML+=`<label style="display:block"><input type="checkbox" class="sn-cb" value="${sn}"> ${sn}</label>`;
-      });
-      dlg.innerHTML+=`<br><div><b>Zielprodukt:</b></div>`;
-      groups.forEach((g,i)=>{
-        const {ss,se}=getDates(g.r);
-        dlg.innerHTML+=`
-          <label style="display:block;margin:6px 0">
-            <input type="radio" name="target" value="${i}">
-            ${getProductName(g.r)} – SLA ${getSLA(g.r)||'—'} – ${getCountry(g.r)||'—'} – ${ss||'—'} → ${se||'—'}
-          </label>`;
-      });
-
-      const btnRow=document.createElement('div');
-      btnRow.style.cssText='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap';
-
-      const assign=document.createElement('button');
-      assign.textContent='Zuordnen';
-      assign.onclick=()=>{
-        const selSN=[...dlg.querySelectorAll('.sn-cb:checked')].map(cb=>cb.value);
-        const selT=dlg.querySelector('input[name="target"]:checked');
-        if(!selSN.length) return alert('Bitte mindestens eine Seriennummer auswählen');
-        if(!selT) return alert('Bitte ein Zielprodukt auswählen');
-        const g=groups[Number(selT.value)];
-        g.sns.push(...selSN);
-        remaining=remaining.filter(sn=>!selSN.includes(sn));
-        if(!remaining.length){ dlg.remove(); onDone(parked); }
-        else render();
-      };
-
-      const park=document.createElement('button');
-      park.textContent='Produkt fehlt – später hinzufügen';
-      park.onclick=()=>{
-        const selSN=[...dlg.querySelectorAll('.sn-cb:checked')].map(cb=>cb.value);
-        if(!selSN.length) return alert('Bitte Seriennummern auswählen');
-        parked.push(...selSN);
-        remaining=remaining.filter(sn=>!selSN.includes(sn));
-        if(!remaining.length){ dlg.remove(); onDone(parked); }
-        else render();
-      };
-
-      const cancel=document.createElement('button');
-      cancel.textContent='Abbrechen';
-      cancel.onclick=()=>dlg.remove();
-
-      [assign,park,cancel].forEach(b=>{
-        b.style.cssText='flex:1;background:#2b2b2b;color:#fff;border:1px solid #444;border-radius:8px;padding:6px;cursor:pointer';
-        btnRow.appendChild(b);
-      });
-      dlg.appendChild(btnRow);
-    }
-
-    render();
-    document.body.appendChild(dlg);
   }
 
   /* ===============================
      CORE LOGIC
      =============================== */
-  function applyDelta(){
+  async function apply(){
     const keep=splitList(document.getElementById('sn-keep').value);
     const remove=splitList(document.getElementById('sn-remove').value);
     const add=splitList(document.getElementById('sn-add').value);
 
+    /* ---- CONFLICT DETECTION ---- */
+    const conflicts=[
+      ...keep.filter(sn=>remove.includes(sn)).map(sn=>`${sn} (Behalten + Entfernen)`),
+      ...keep.filter(sn=>add.includes(sn)).map(sn=>`${sn} (Behalten + Hinzufügen)`),
+      ...remove.filter(sn=>add.includes(sn)).map(sn=>`${sn} (Entfernen + Hinzufügen)`)
+    ];
+    const blocked=new Set(conflicts.map(c=>c.split(' ')[0]));
+    if(conflicts.length){
+      alert(
+        'Warnung – widersprüchliche Seriennummern:\n\n'+
+        conflicts.join('\n')+
+        '\n\nDiese Seriennummern wurden NICHT verändert.'
+      );
+    }
+
     snapshot();
 
-    const groups = getRows().map(r=>{
-      const d=getDescField(r), q=getQtyField(r), parsed=d?parseDesc(d.value):null;
+    const groups=[];
+    for(const r of rows()){
+      const d=descField(r); if(!d) continue;
+      const pid=productId(r);
+      const meta=pid?await fetchProductMeta(pid):{sla:'',country:''};
+      const parsed=parseDesc(d.value);
       let sns=[];
-      if(parsed && parsed.snLine){
+      if(parsed.snLine){
         sns=parsed.snLine.replace(/^s\/?n\s*:/i,'').split(',').map(S).filter(Boolean);
       }
-      // REMOVE only
-      sns=sns.filter(sn=>!remove.includes(sn));
-      return {r, d, q, parsed, sns};
-    }).filter(g=>g.d);
-
-    // Validate KEEP (no deletion)
-    const allSN=groups.flatMap(g=>g.sns);
-    const missingKeep=keep.filter(sn=>!allSN.includes(sn));
-    if(missingKeep.length){
-      alert('Warnung:\nFolgende Seriennummern aus "Behalten" fehlen:\n'+missingKeep.join(', '));
+      sns=sns.filter(sn=>!remove.includes(sn)&&!blocked.has(sn));
+      groups.push({r,d,parsed,sns,meta});
     }
 
-    if(add.length){
-      assignmentDialog(add, groups, parked=>{
-        writeBack(groups);
-        if(parked.length){
-          alert('Nicht zugeordnet (Produkt fehlt):\n'+parked.join(', '));
-        }
-      });
-    } else {
-      writeBack(groups);
+    // ADD is not auto-applied in v0.3.4 (only via dialog in 0.3.3+)
+    if(add.filter(sn=>!blocked.has(sn)).length){
+      alert(
+        'Hinweis:\nNeue Seriennummern bitte über den Zuordnungsdialog (v0.3.3+) zuordnen.\n'+
+        'Konfliktfreie Seriennummern:\n'+
+        add.filter(sn=>!blocked.has(sn)).join(', ')
+      );
     }
-  }
 
-  function writeBack(groups){
     groups.forEach(g=>{
-      g.d.value=buildDesc(g.sns, g.parsed);
+      g.d.value=buildDesc(g.sns,g.parsed);
       fire(g.d);
-      if(g.q){ g.q.value=String(g.sns.length); fire(g.q); }
+      const q=qtyField(g.r);
+      if(q){q.value=String(g.sns.length); fire(q);}
     });
-    alert('SN-Abgleich abgeschlossen (v0.3.3)');
+
+    alert('SN-Abgleich abgeschlossen (v0.3.4)');
   }
 
-  /* ===============================
-     INIT
-     =============================== */
-  addPanel();
-
+  panel();
 })();
