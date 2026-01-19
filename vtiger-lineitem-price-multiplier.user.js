@@ -6,6 +6,8 @@
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
+// @updateURL   https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-price-multiplier.user.js
+// @downloadURL https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-price-multiplier.user.js
 // ==/UserScript==
 
 (function () {
