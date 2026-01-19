@@ -2,6 +2,8 @@
 // @name         VTiger Product Number Tools
 // @namespace    hw24.vtiger.product.numbertools
 // @version      1.0.2
+// @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-product-number-tools.user.js
+// @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-product-number-tools.user.js
 // @description  Bulk multiply/divide Purchase Cost, Unit Price and Duration in months with undo support
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
