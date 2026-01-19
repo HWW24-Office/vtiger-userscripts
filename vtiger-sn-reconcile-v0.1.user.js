@@ -1,323 +1,245 @@
 // ==UserScript==
-// @name         VTiger SN Reconciliation v0.2.2 (Edit Mode)
+// @name         VTiger SN Reconciliation (Delta Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.2.2
-// @description  Serial number reconciliation with guided assignment, NetApp FAS HA logic, automatic quantity update, fixed description order and color legend.
+// @version      0.3.0
+// @description  Delta-based serial number reconciliation with keep/remove/add lists, guided assignment, auto quantity update and undo
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
 
-(async function () {
+(function () {
   'use strict';
 
+  /* ===============================
+     MODE CHECK
+     =============================== */
   if (
     !location.href.includes('view=Edit') ||
     !/module=(Quotes|SalesOrder|Invoice|PurchaseOrder)/.test(location.href)
   ) return;
 
   /* ===============================
-     Utils
+     UTILS
      =============================== */
+  const S = s => (s || '').toString().trim();
+  const splitList = s =>
+    S(s)
+      .split(/[\n,]+/)
+      .map(x => S(x))
+      .filter(Boolean);
 
-  const $ = (s, r = document) => r.querySelector(s);
-  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const T = s => (s || '').toString().trim();
-  const norm = s => T(s).toLowerCase().replace(/\s+/g, '');
-
-  const parseDate = s => {
-    const m = T(s).match(/(\d{2})\.(\d{2})\.(\d{4})/);
-    return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
-  };
-
-  const extract = (rx, txt) => {
-    const m = T(txt).match(rx);
-    return m ? T(m[1]) : '';
-  };
-
-  const extractSN = desc => {
-    const m = desc.match(/S\/N\s*:\s*([^\n\r]+)/i);
-    return m ? m[1].split(/[,;\n]+/).map(s => s.trim()).filter(Boolean) : [];
-  };
-
-  /* ===============================
-     Manufacturer lookup
-     =============================== */
-
-  const META = new Map();
-
-  async function getManufacturer(productId) {
-    if (!productId) return '';
-    if (META.has(productId)) return META.get(productId);
-
-    try {
-      const html = await fetch(
-        `index.php?module=Products&view=Detail&record=${productId}`,
-        { credentials: 'same-origin' }
-      ).then(r => r.text());
-
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const lab = [...doc.querySelectorAll('[id^="Products_detailView_fieldLabel_"]')]
-        .find(l => /manufacturer/i.test(l.textContent));
-
-      let val = '';
-      if (lab) {
-        const v = doc.getElementById(lab.id.replace('fieldLabel', 'fieldValue'));
-        val = T(v ? v.textContent : '');
-      }
-
-      META.set(productId, val);
-      return val;
-    } catch {
-      return '';
-    }
-  }
-
-  const isNetAppFAS = (manufacturer, productName) =>
-    norm(manufacturer) === 'netapp' && /(fas|aff)/i.test(productName);
-
-  /* ===============================
-     Undo
-     =============================== */
-
-  let BACKUP = null;
-
-  const snapshot = () => {
-    BACKUP = $$('#lineItemTab textarea, #lineItemTab input').map(el => ({
-      el, value: el.value
-    }));
-  };
-
-  const undo = () => {
-    if (!BACKUP) return;
-    BACKUP.forEach(x => x.el.value = x.value);
-    clearHighlights();
-    alert('Undo durchgeführt');
-  };
-
-  /* ===============================
-     Highlighting
-     =============================== */
-
-  const mark = (li, color, title) => {
-    li.td.style.outline = `3px solid ${color}`;
-    li.td.title = title;
-  };
-
-  const clearHighlights = () => {
-    $$('tr.lineItemRow td, tr.inventoryRow td').forEach(td => {
-      td.style.outline = '';
-      td.title = '';
-    });
-  };
-
-  /* ===============================
-     Extract Line Items
-     =============================== */
-
-  async function extractLineItems() {
-    const rows = $$('tr.lineItemRow[id^="row"], tr.inventoryRow');
-    const out = [];
-
-    for (const tr of rows) {
-      const td = tr.querySelector('td');
-      const descEl = tr.querySelector('textarea');
-      const qtyEl = tr.querySelector('input[name^="qty"]');
-      const hid = tr.querySelector('input[name*="productid"]');
-
-      const desc = descEl ? descEl.value : '';
-      const productName = T(td?.innerText || '');
-
-      const li = {
-        tr,
-        td,
-        productName,
-        productId: hid?.value || '',
-        desc,
-        qtyEl,
-        qty: qtyEl ? Number(qtyEl.value) : 0,
-        serials: extractSN(desc),
-        serviceStart: extract(/Service\s*Start\s*:\s*([^\n\r]+)/i, desc),
-        serviceEnd: extract(/Service\s*(?:Ende|End)\s*:\s*([^\n\r]+)/i, desc),
-        manufacturer: await getManufacturer(hid?.value || '')
-      };
-
-      out.push(li);
-    }
-
-    return out;
-  }
-
-  /* ===============================
-     Description rebuild
-     =============================== */
-
-  function rebuildDescription(li, newSerials) {
-    const lines = li.desc.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-
-    const rest = lines.filter(l =>
-      !/^S\/N\s*:/i.test(l) &&
-      !/^Service\s*Start\s*:/i.test(l) &&
-      !/^Service\s*(Ende|End)\s*:/i.test(l)
+  const fire = el =>
+    el && ['input', 'change', 'blur'].forEach(e =>
+      el.dispatchEvent(new Event(e, { bubbles: true }))
     );
 
-    const out = [];
-    out.push(`S/N: ${newSerials.join(', ')}`);
-    out.push(...rest);
-    if (li.serviceStart) out.push(`Service Start: ${li.serviceStart}`);
-    if (li.serviceEnd) out.push(`Service End: ${li.serviceEnd}`);
+  /* ===============================
+     DESCRIPTION PARSER / BUILDER
+     =============================== */
+  function parseDesc(desc) {
+    const lines = S(desc).split(/\r?\n/);
+    let snLine = '';
+    let ss = '';
+    let se = '';
+    const rest = [];
 
+    for (const l of lines) {
+      if (/^s\/?n\s*:/i.test(l)) snLine = l;
+      else if (/^service\s*start\s*:/i.test(l)) ss = l;
+      else if (/^service\s*(ende|end)\s*:/i.test(l)) se = l;
+      else rest.push(l);
+    }
+    return { snLine, ss, se, rest };
+  }
+
+  function buildDesc(snList, parsed) {
+    const out = [];
+    if (snList.length) out.push('S/N: ' + snList.join(', '));
+    out.push(...parsed.rest.filter(Boolean));
+    if (parsed.ss) out.push(parsed.ss);
+    if (parsed.se) out.push(parsed.se);
     return out.join('\n');
   }
 
   /* ===============================
-     UI Panel
+     COLLECT LINE ITEMS
      =============================== */
+  function getRows() {
+    return [...document.querySelectorAll(
+      'tr.lineItemRow[id^="row"],tr.inventoryRow'
+    )];
+  }
 
-  function showPanel() {
-    if ($('#hw24-sn-panel')) return;
+  function getDescField(row) {
+    return (
+      row.querySelector("textarea[name*='comment']") ||
+      row.querySelector("textarea[name*='description']")
+    );
+  }
+
+  function getQtyField(row) {
+    return row.querySelector("input[name^='qty']");
+  }
+
+  /* ===============================
+     UI PANEL
+     =============================== */
+  function addPanel() {
+    if (document.getElementById('hw24-sn-panel')) return;
 
     const p = document.createElement('div');
     p.id = 'hw24-sn-panel';
     p.style.cssText = `
-      position:fixed;left:16px;bottom:16px;z-index:999999;
-      background:#111;color:#fff;padding:12px;width:420px;
-      border-radius:10px;font:13px system-ui;
-      box-shadow:0 6px 20px rgba(0,0,0,.4)
+      position:fixed;
+      right:16px;
+      bottom:16px;
+      z-index:2147483647;
+      background:#111;
+      color:#fff;
+      padding:12px;
+      border-radius:10px;
+      width:360px;
+      font:13px/1.4 system-ui,Segoe UI,Roboto,Arial;
+      box-shadow:0 6px 20px rgba(0,0,0,.35)
     `;
 
     p.innerHTML = `
-      <b>SN-Abgleich v0.2.2</b><br><br>
-      <textarea id="hw24-sn-input"
-        placeholder="Soll-Seriennummern (eine pro Zeile)"
-        style="width:100%;height:120px;color:#000;background:#fff"></textarea>
+      <b>SN Abgleich (Delta)</b><br><br>
 
-      <div style="margin-top:8px">
-        <button id="hw24-run">🔍 Analysieren</button>
-        <button id="hw24-assign">➕ Zuordnen</button>
-        <button id="hw24-undo">↩ Undo</button>
-        <button id="hw24-clear">🧹 Clear</button>
+      <label>🟢 Behalten</label><br>
+      <textarea id="sn-keep" style="width:100%;height:60px"></textarea><br>
+
+      <label>🔴 Entfernen</label><br>
+      <textarea id="sn-remove" style="width:100%;height:60px"></textarea><br>
+
+      <label>🔵 Hinzufügen</label><br>
+      <textarea id="sn-add" style="width:100%;height:60px"></textarea><br>
+
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button id="sn-apply">🔍 Anwenden</button>
+        <button id="sn-undo">↩ Undo</button>
       </div>
 
-      <div id="hw24-sn-result" style="margin-top:8px"></div>
-
-      <div style="margin-top:10px;font-size:12px">
+      <div style="margin-top:8px;font-size:11px;opacity:.85">
         <b>Legende</b><br>
-        🟢 OK<br>
-        🟡 NetApp FAS (HA)<br>
-        🟠 Ohne Seriennummern<br>
-        🔴 Unzugeordnet<br>
-        🟣 Mehrfach verwendet
+        🟢 OK · 🔴 Entfernt · 🔵 Neu · 🟣 Mehrfach
       </div>
     `;
 
+    p.querySelectorAll('button').forEach(b => {
+      b.style.cssText =
+        'flex:1;background:#2b2b2b;color:#fff;border:1px solid #444;border-radius:8px;padding:6px;cursor:pointer';
+    });
+
     document.body.appendChild(p);
 
-    $('#hw24-run').onclick = runAnalysis;
-    $('#hw24-assign').onclick = runAssignment;
-    $('#hw24-undo').onclick = undo;
-    $('#hw24-clear').onclick = clearHighlights;
+    p.querySelector('#sn-apply').onclick = applyDelta;
+    p.querySelector('#sn-undo').onclick = undo;
   }
 
   /* ===============================
-     Analysis & Assignment
+     STATE (UNDO)
      =============================== */
+  let SNAPSHOT = null;
 
-  let STATE = null;
+  function snapshot() {
+    SNAPSHOT = getRows().map(r => {
+      const d = getDescField(r);
+      const q = getQtyField(r);
+      return {
+        row: r,
+        desc: d ? d.value : '',
+        qty: q ? q.value : ''
+      };
+    });
+  }
 
-  async function runAnalysis() {
+  function undo() {
+    if (!SNAPSHOT) return alert('Kein Undo verfügbar');
+    SNAPSHOT.forEach(s => {
+      const d = getDescField(s.row);
+      const q = getQtyField(s.row);
+      if (d) { d.value = s.desc; fire(d); }
+      if (q) { q.value = s.qty; fire(q); }
+    });
+    alert('Undo durchgeführt');
+  }
+
+  /* ===============================
+     CORE LOGIC
+     =============================== */
+  function applyDelta() {
+    const keep = splitList(document.getElementById('sn-keep').value);
+    const remove = splitList(document.getElementById('sn-remove').value);
+    const add = splitList(document.getElementById('sn-add').value);
+
     snapshot();
-    clearHighlights();
 
-    const soll = $('#hw24-sn-input').value
-      .split(/\n+/).map(s => s.trim()).filter(Boolean);
+    const used = new Map(); // sn -> rows
 
-    if (!soll.length) {
-      alert('Bitte Soll-Seriennummern eingeben');
-      return;
-    }
+    getRows().forEach(row => {
+      const d = getDescField(row);
+      if (!d) return;
 
-    const items = await extractLineItems();
-    const snMap = new Map();
+      const parsed = parseDesc(d.value);
+      let sns = [];
 
-    items.forEach(li => {
-      li.serials.forEach(sn => {
-        if (!snMap.has(sn)) snMap.set(sn, []);
-        snMap.get(sn).push(li);
+      if (parsed.snLine) {
+        sns = parsed.snLine
+          .replace(/^s\/?n\s*:/i, '')
+          .split(',')
+          .map(x => S(x))
+          .filter(Boolean);
+      }
+
+      // REMOVE
+      sns = sns.filter(sn => !remove.includes(sn));
+
+      // KEEP filter (optional strictness)
+      if (keep.length) {
+        sns = sns.filter(sn => keep.includes(sn));
+      }
+
+      // Track duplicates
+      sns.forEach(sn => {
+        if (!used.has(sn)) used.set(sn, []);
+        used.get(sn).push(row);
       });
-    });
 
-    const unassigned = soll.filter(sn => !snMap.has(sn));
+      // ADD (only here if product exists)
+      add.forEach(sn => {
+        if (!sns.includes(sn)) sns.push(sn);
+      });
 
-    let ok = 0, warn = 0;
+      // Rebuild description
+      const newDesc = buildDesc(sns, parsed);
+      d.value = newDesc;
+      fire(d);
 
-    items.forEach(li => {
-      if (!li.serials.length) {
-        mark(li, 'orange', 'Produkt ohne Seriennummern');
-        warn++;
-        return;
-      }
-
-      const isFAS = isNetAppFAS(li.manufacturer, li.productName);
-      const expected = isFAS
-        ? Math.ceil(li.serials.length / 2)
-        : li.serials.length;
-
-      if (li.qty !== expected) {
-        mark(li, isFAS ? 'gold' : 'yellow', 'Quantity passt nicht');
-        warn++;
-      } else {
-        mark(li, 'limegreen', 'OK');
-        ok++;
+      // Quantity = SN count (simple rule)
+      const q = getQtyField(row);
+      if (q) {
+        q.value = String(sns.length || 0);
+        fire(q);
       }
     });
 
-    snMap.forEach((arr, sn) => {
-      if (arr.length > 1) {
-        arr.forEach(li => mark(li, 'purple', `SN ${sn} mehrfach verwendet`));
-        warn++;
-      }
-    });
-
-    STATE = { items, unassigned };
-
-    $('#hw24-sn-result').textContent =
-      `OK: ${ok} · Warnungen: ${warn} · Unzugeordnet: ${unassigned.length}`;
-  }
-
-  async function runAssignment() {
-    if (!STATE || !STATE.unassigned.length) {
-      alert('Keine unzugeordneten Seriennummern');
-      return;
+    // WARN duplicates
+    const multi = [...used.entries()].filter(([, r]) => r.length > 1);
+    if (multi.length) {
+      alert(
+        'Warnung:\nSeriennummern mehrfach verwendet:\n' +
+        multi.map(([sn]) => sn).join(', ')
+      );
+    } else {
+      alert('SN-Abgleich abgeschlossen');
     }
-
-    const items = STATE.items;
-    const choice = prompt(
-      STATE.unassigned.join(', ') +
-      '\n\nZu welchem Produkt zuordnen? (Nummer)\n\n' +
-      items.map((li, i) => `${i + 1}: ${li.productName}`).join('\n')
-    );
-
-    const idx = Number(choice) - 1;
-    const target = items[idx];
-    if (!target) return;
-
-    const descEl = target.tr.querySelector('textarea');
-    const newSerials = [...new Set([...target.serials, ...STATE.unassigned])];
-
-    descEl.value = rebuildDescription(target, newSerials);
-
-    const isFAS = isNetAppFAS(target.manufacturer, target.productName);
-    const newQty = isFAS ? Math.ceil(newSerials.length / 2) : newSerials.length;
-    if (target.qtyEl) target.qtyEl.value = newQty;
-
-    alert('Zuordnung & Quantity aktualisiert');
   }
 
   /* ===============================
-     Boot
+     INIT
      =============================== */
-
-  showPanel();
+  addPanel();
 
 })();
