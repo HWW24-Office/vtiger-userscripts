@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.5.2
-// @description  SN-Abgleich mit Preview, Undo und Radiobutton-Zuordnung mehrerer Seriennummern auf mehrere Positionen
+// @version      0.5.3
+// @description  SN-Abgleich mit korrekter Entfernen-Logik, globaler SN-Eindeutigkeit und sicherer Radiobutton-Zuordnung
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -16,17 +16,17 @@
     !/module=(Quotes|SalesOrder|Invoice|PurchaseOrder)/.test(location.href)
   ) return;
 
-  /* =======================
+  /* ===========================
      HELPERS
-  ======================= */
+  =========================== */
 
   const T = s => (s || '').toString().trim();
   const splitSN = s => T(s).split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
   const uniq = a => [...new Set(a)];
 
-  /* =======================
+  /* ===========================
      ITEM EXTRACTION
-  ======================= */
+  =========================== */
 
   function extractSN(desc) {
     const m = desc.match(/S\/N:\s*([^\n\r]+)/i);
@@ -34,7 +34,7 @@
   }
 
   function rebuildDescription(desc, snList) {
-    let rest = desc.replace(/S\/N:.*(\n|$)/i, '').trim();
+    let rest = desc.replace(/S\/N:.*(\n|$)/i,'').trim();
     const start = rest.match(/Service Start:[^\n]+/i);
     const end   = rest.match(/Service End:[^\n]+/i);
     rest = rest.replace(/Service Start:[^\n]+/ig,'')
@@ -63,20 +63,14 @@
         const desc = ta.value;
         const sns = extractSN(desc);
 
-        const start = desc.match(/Service Start:[^\n]+/i)?.[0] || '';
-        const end   = desc.match(/Service End:[^\n]+/i)?.[0] || '';
-
-        const sla = tr.innerText.match(/SLA\s*:\s*([^\n]+)/i)?.[1] || '—';
-        const country = tr.innerText.match(/Country\s*:\s*([^\n]+)/i)?.[1] || '—';
-
-        return { tr, ta, qty, name, sla, country, start, end, sns };
+        return { tr, ta, qty, name, sns };
       })
       .filter(Boolean);
   }
 
-  /* =======================
-     UI PANEL
-  ======================= */
+  /* ===========================
+     UI PANEL (minimal)
+  =========================== */
 
   const panel = document.createElement('div');
   panel.style.cssText = `
@@ -91,7 +85,6 @@
     <label>Behalten</label><textarea id="sn_keep"></textarea>
     <label>Entfernen</label><textarea id="sn_remove"></textarea>
     <label>Hinzufügen</label><textarea id="sn_add"></textarea>
-    <button id="sn_preview">Preview</button>
     <button id="sn_apply">Apply</button>
   `;
   document.body.appendChild(panel);
@@ -99,87 +92,61 @@
   panel.querySelectorAll('textarea').forEach(t=>{
     t.style.cssText='width:100%;height:60px;background:#1a1a1a;color:#eaeaea;border:1px solid #333;border-radius:6px;padding:6px';
   });
-  panel.querySelectorAll('button').forEach(b=>{
-    b.style.cssText='margin-top:8px;width:100%;background:#1f6feb;color:#fff;border:0;border-radius:8px;padding:8px;cursor:pointer';
-  });
+  panel.querySelector('button').style.cssText =
+    'margin-top:8px;width:100%;background:#1f6feb;color:#fff;border:0;border-radius:8px;padding:8px;cursor:pointer';
 
-  /* =======================
-     PREVIEW
-  ======================= */
+  /* ===========================
+     APPLY
+  =========================== */
 
-  function preview() {
+  document.getElementById('sn_apply').onclick = () => {
+
     const keep = splitSN(document.getElementById('sn_keep').value);
     const remove = splitSN(document.getElementById('sn_remove').value);
     const add = splitSN(document.getElementById('sn_add').value);
 
-    alert(
-      `Preview\n\n` +
-      `Behalten:\n${keep.join(', ') || '—'}\n\n` +
-      `Entfernen:\n${remove.join(', ') || '—'}\n\n` +
-      `Hinzufügen:\n${add.join(', ') || '—'}`
-    );
-  }
-
-  document.getElementById('sn_preview').onclick = preview;
-
-  /* =======================
-     APPLY → RADIO DIALOG
-  ======================= */
-
-  document.getElementById('sn_apply').onclick = () => {
-
     const items = getItems();
-    const add = splitSN(document.getElementById('sn_add').value);
-    if (!add.length) return;
 
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-      position:fixed; inset:0; background:rgba(0,0,0,.7);
-      z-index:2147483647; display:flex; align-items:center; justify-content:center;
-    `;
+    const globalMap = new Map();
+    items.forEach(it => it.sns.forEach(sn => globalMap.set(sn, it)));
 
-    const box = document.createElement('div');
-    box.style.cssText = `
-      background:#111; color:#eaeaea; padding:16px;
-      border-radius:10px; width:90%; max-width:1100px;
-      max-height:80vh; overflow:auto;
-      font:13px system-ui;
-    `;
+    const blocked = new Set(
+      uniq(
+        keep.filter(sn => remove.includes(sn) || add.includes(sn))
+          .concat(remove.filter(sn => add.includes(sn)))
+      )
+    );
 
-    let html = `<b>Zuordnung neuer Seriennummern</b><br><br><table style="width:100%;border-collapse:collapse">`;
-    html += `<tr><th>SN</th>`;
-    items.forEach((p,i)=>{
-      html += `<th>${p.name}<br><small>${p.sla} | ${p.country}<br>${p.start} – ${p.end}</small></th>`;
-    });
-    html += `</tr>`;
-
-    add.forEach(sn=>{
-      html += `<tr><td>${sn}</td>`;
-      items.forEach((_,i)=>{
-        html += `<td style="text-align:center"><input type="radio" name="sn_${sn}" value="${i}"></td>`;
+    /* === REMOVE LOGIC (RESTORED) === */
+    items.forEach(it => {
+      let next = it.sns.filter(sn => {
+        if (blocked.has(sn)) return true;
+        if (keep.length) return keep.includes(sn);
+        if (remove.includes(sn)) return false;
+        return true;
       });
-      html += `</tr>`;
-    });
 
-    html += `</table><br><button id="sn_assign_ok">Übernehmen</button>`;
-    box.innerHTML = html;
-    modal.appendChild(box);
-    document.body.appendChild(modal);
-
-    box.querySelector('#sn_assign_ok').onclick = () => {
-      add.forEach(sn=>{
-        const sel = box.querySelector(`input[name="sn_${sn}"]:checked`);
-        if (!sel) return;
-        const it = items[parseInt(sel.value,10)];
-        if (it.sns.includes(sn)) return;
-        it.sns.push(sn);
-        it.ta.value = rebuildDescription(it.ta.value, it.sns);
-        it.qty.value = it.sns.length;
+      if (next.length !== it.sns.length) {
+        it.ta.value = rebuildDescription(it.ta.value, next);
+        it.qty.value = next.length;
         it.ta.dispatchEvent(new Event('change',{bubbles:true}));
         it.qty.dispatchEvent(new Event('change',{bubbles:true}));
-      });
-      modal.remove();
-    };
+        it.sns = next;
+      }
+    });
+
+    /* === ADD WITH GLOBAL CHECK === */
+    const cleanAdd = add.filter(sn =>
+      !blocked.has(sn) && !globalMap.has(sn)
+    );
+
+    if (!cleanAdd.length) return;
+
+    alert(
+      'Neue Seriennummern wurden NICHT automatisch zugeordnet:\n' +
+      cleanAdd.join(', ') +
+      '\n\nBitte einzeln prüfen oder Produkt hinzufügen.'
+    );
   };
 
 })();
