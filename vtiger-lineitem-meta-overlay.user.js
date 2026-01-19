@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.0.0
-// @description  Auto-run line item meta overlay in Edit mode with toggle, status badge and manual refresh; button-only in Detail view
+// @version      1.0.1
+// @description  Auto-run line item meta overlay in Edit mode with toggle, status badge, vendor colors and mixed-vendor warning; button-only in Detail view
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -28,23 +28,35 @@
   if (!isEdit && !isDetail) return;
 
   /* ===============================
+     CONFIG: Vendor Colors
+     =============================== */
+
+  const VENDOR_COLORS = {
+    "Technogroup": "#2563eb",
+    "Park Place": "#16a34a",
+    "ITRIS": "#9333ea",
+    "IDS": "#ea580c",
+    "DIS": "#dc2626",
+    "Axians": "#0891b2"
+  };
+
+  function colorForVendor(vendor) {
+    if (!vendor) return "#6b7280";
+    const v = vendor.toLowerCase();
+    for (const key of Object.keys(VENDOR_COLORS)) {
+      if (v.includes(key.toLowerCase())) return VENDOR_COLORS[key];
+    }
+    return "#6b7280";
+  }
+
+  /* ===============================
      UTILITIES
      =============================== */
 
-  const W = window;
   const LSKEY = '__vt_meta_cache_v3';
   const mem = new Map();
 
   const S = s => (s || '').toString().trim();
-  const n = v => {
-    if (v == null) return NaN;
-    let s = ('' + v).replace(/[^0-9,.\-]/g, '');
-    if ((s.match(/[.,]/g) || []).length > 1) s = s.replace(/\.(?=.*\.)/g, '');
-    if (s.includes(',') && s.includes('.')) s = s.replace(/,/g, '');
-    else if (s.includes(',')) s = s.replace(',', '.');
-    return parseFloat(s);
-  };
-  const fire = el => el && ['input', 'change'].forEach(e => el.dispatchEvent(new Event(e, { bubbles: true })));
   const debounce = (fn, ms) => {
     let t;
     return (...a) => {
@@ -64,7 +76,7 @@
   }
 
   /* ===============================
-     META FETCH (unchanged logic)
+     META FETCH
      =============================== */
 
   async function fetchMeta(url) {
@@ -107,7 +119,7 @@
   }
 
   /* ===============================
-     CORE LOGIC
+     RENDER HELPERS
      =============================== */
 
   function ensureInfo(td) {
@@ -115,7 +127,7 @@
     if (!d) {
       d = document.createElement('div');
       d.className = 'vt-prodinfo';
-      d.style.cssText = 'margin-top:6px;color:#555;font-size:12px;white-space:pre-wrap';
+      d.style.cssText = 'margin-top:6px;font-size:12px;white-space:pre-wrap';
       td.appendChild(d);
     }
     return d;
@@ -125,34 +137,82 @@
     return [
       tr.querySelector('.purchaseCost')?.value,
       tr.querySelector('textarea')?.value,
-      tr.querySelector('input[name*="productid"]')?.value
+      tr.querySelector('input[name^="hdnProductId"]')?.value
     ].join('|');
   }
+
+  function renderInfo(info, meta) {
+    info.innerHTML = `
+      <span style="
+        display:inline-block;
+        padding:2px 6px;
+        border-radius:999px;
+        background:${colorForVendor(meta.vendor)};
+        color:#fff;
+        font-size:11px;
+        margin-right:6px
+      ">${meta.vendor || '—'}</span>
+      PN: ${meta.pn || '—'}
+      • SLA: ${meta.sla || '—'}
+      • Duration: ${meta.duration || '—'}
+      • Country: ${meta.country || '—'}
+    `;
+  }
+
+  /* ===============================
+     CORE: EDIT MODE
+     =============================== */
 
   async function processEdit() {
     const tbl = document.querySelector('#lineItemTab');
     if (!tbl) return;
 
     const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+    const vendorsSeen = new Set();
+
     for (const tr of rows) {
+      const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
       const sig = sigForRow(tr);
       if (tr.dataset.vtSig === sig) continue;
       tr.dataset.vtSig = sig;
 
-      const td = tr.querySelector('td');
+      const nameEl =
+        tr.querySelector('#productName' + rn) ||
+        tr.querySelector('input[id^="productName"]') ||
+        tr.querySelector('a[href*="module=Products"]');
+
+      const td = nameEl ? nameEl.closest('td') : null;
       if (!td) continue;
 
-      const hid = tr.querySelector('input[name*="productid"]');
+      const hid =
+        tr.querySelector(`input[name="hdnProductId${rn}"]`) ||
+        tr.querySelector('input[name^="hdnProductId"]');
+
       if (!hid || !hid.value) continue;
 
       const url = `index.php?module=Products&view=Detail&record=${hid.value}`;
       const meta = await fetchMeta(url);
 
+      if (meta.vendor) vendorsSeen.add(meta.vendor);
+
       const info = ensureInfo(td);
-      info.textContent =
-        `PN: ${meta.pn || '—'} • Vendor: ${meta.vendor || '—'} • SLA: ${meta.sla || '—'} • Duration: ${meta.duration || '—'} • Country: ${meta.country || '—'}`;
+      renderInfo(info, meta);
+    }
+
+    const warn = document.getElementById('hw24-meta-warning');
+    if (warn) {
+      if (vendorsSeen.size > 1) {
+        warn.textContent = `⚠️ Gemischte Vendors (${vendorsSeen.size})`;
+        warn.style.color = "#facc15";
+      } else {
+        warn.textContent = "";
+      }
     }
   }
+
+  /* ===============================
+     CORE: DETAIL MODE
+     =============================== */
 
   async function processDetail() {
     const tbl = document.querySelector('.lineItemsTable');
@@ -166,17 +226,15 @@
 
       const meta = await fetchMeta(a.href);
       const info = ensureInfo(td);
-      info.textContent =
-        `PN: ${meta.pn || '—'} • Vendor: ${meta.vendor || '—'} • SLA: ${meta.sla || '—'} • Duration: ${meta.duration || '—'} • Country: ${meta.country || '—'}`;
+      renderInfo(info, meta);
     }
   }
 
   /* ===============================
-     UI PANEL (Toggle / Status / Refresh)
+     UI PANEL (Edit Mode)
      =============================== */
 
   let autoRunEnabled = true;
-  let observer = null;
 
   function addControlPanel() {
     if (document.getElementById('hw24-meta-panel')) return;
@@ -197,7 +255,8 @@
     `;
 
     p.innerHTML = `
-      <div id="hw24-meta-status">🟢 Meta aktuell</div>
+      <div id="hw24-meta-status">🟢 Auto-Run aktiv</div>
+      <div id="hw24-meta-warning" style="margin-top:4px;font-size:11px;"></div>
       <button id="hw24-meta-toggle">⏸ Pause Auto-Run</button>
       <button id="hw24-meta-refresh">♻ Refresh</button>
     `;
@@ -237,8 +296,8 @@
 
     const tbl = document.querySelector('#lineItemTab');
     if (tbl) {
-      observer = new MutationObserver(rerun);
-      observer.observe(tbl, { childList: true, subtree: true });
+      const obs = new MutationObserver(rerun);
+      obs.observe(tbl, { childList: true, subtree: true });
     }
   }
 
@@ -248,7 +307,7 @@
     btn.style.cssText = `
       position:fixed;
       bottom:16px;
-      right:16px;
+      left:16px;
       z-index:2147483647;
       background:#1f6feb;
       color:#fff;
