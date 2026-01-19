@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.4.0
-// @description  Seriennummern-Abgleich mit Undo, globaler Duplikatsperre und sicherem Zuordnungsdialog
+// @version      0.5.0
+// @description  SN-Abgleich mit Multi-Zuordnung, Preview-Diff, Undo und SLA/Country Anzeige
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -22,10 +22,10 @@
 
   const T = s => (s || '').toString().trim();
   const splitSN = s => T(s).split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
-  const uniq = arr => [...new Set(arr)];
+  const uniq = a => [...new Set(a)];
 
   /* ===========================
-     SNAPSHOT FOR UNDO
+     SNAPSHOT / UNDO
   =========================== */
 
   let SNAPSHOT = null;
@@ -40,93 +40,20 @@
   }
 
   function undo() {
-    if (!SNAPSHOT) {
-      alert('Kein Undo verfügbar.');
-      return;
-    }
+    if (!SNAPSHOT) return alert('Kein Undo verfügbar');
     SNAPSHOT.forEach(s => {
       s.ta.value = s.desc;
       s.qty.value = s.q;
-      s.ta.dispatchEvent(new Event('change', { bubbles: true }));
-      s.qty.dispatchEvent(new Event('change', { bubbles: true }));
+      s.ta.dispatchEvent(new Event('change',{bubbles:true}));
+      s.qty.dispatchEvent(new Event('change',{bubbles:true}));
     });
-    alert('Undo durchgeführt.');
     SNAPSHOT = null;
+    alert('Undo durchgeführt');
   }
 
   /* ===========================
-     UI PANEL
+     ITEM EXTRACTION
   =========================== */
-
-  const panel = document.createElement('div');
-  panel.id = 'hw24-sn-panel';
-  panel.style.cssText = `
-    position:fixed; top:12px; right:12px; z-index:2147483647;
-    background:#111; color:#eaeaea; padding:12px;
-    border-radius:10px; width:400px;
-    box-shadow:0 8px 28px rgba(0,0,0,.45);
-    font:13px system-ui;
-  `;
-  panel.innerHTML = `
-    <b>SN-Abgleich</b>
-    <label>Behalten</label>
-    <textarea id="sn_keep"></textarea>
-    <label>Entfernen</label>
-    <textarea id="sn_remove"></textarea>
-    <label>Hinzufügen</label>
-    <textarea id="sn_add"></textarea>
-    <button id="sn_apply">Anwenden</button>
-    <button id="sn_undo" style="background:#444">Undo</button>
-  `;
-  document.body.appendChild(panel);
-
-  /* ===========================
-     STYLES
-  =========================== */
-
-  const style = document.createElement('style');
-  style.textContent = `
-    #hw24-sn-panel textarea {
-      width:100%; height:60px;
-      background:#1a1a1a; color:#eaeaea;
-      border:1px solid #333; border-radius:6px;
-      padding:6px;
-    }
-    #hw24-sn-panel label { margin-top:6px; display:block; color:#bbb }
-    #hw24-sn-panel button {
-      width:100%; margin-top:8px;
-      background:#1f6feb; color:#fff;
-      border:0; border-radius:8px; padding:8px; cursor:pointer;
-    }
-  `;
-  document.head.appendChild(style);
-
-  /* ===========================
-     CORE
-  =========================== */
-
-  function getItems() {
-    return [...document.querySelectorAll('tr.lineItemRow[id^="row"], tr.inventoryRow')]
-      .map(tr => {
-        const ta = tr.querySelector('textarea');
-        const qty = tr.querySelector('input[name^="qty"]');
-        if (!ta || !qty) return null;
-
-        const name =
-          tr.querySelector('input[id^="productName"]')?.value ||
-          tr.querySelector('td')?.innerText.split('\n')[0] ||
-          'Produkt';
-
-        const desc = ta.value;
-        const sns = extractSN(desc);
-
-        const start = desc.match(/Service Start:[^\n]+/i)?.[0] || '';
-        const end = desc.match(/Service End:[^\n]+/i)?.[0] || '';
-
-        return { tr, ta, qty, name, sns, start, end };
-      })
-      .filter(Boolean);
-  }
 
   function extractSN(desc) {
     const m = desc.match(/S\/N:\s*([^\n\r]+)/i);
@@ -134,7 +61,7 @@
   }
 
   function rebuildDescription(desc, snList) {
-    let rest = desc.replace(/S\/N:.*(\n|$)/i, '').trim();
+    let rest = desc.replace(/S\/N:.*(\n|$)/i,'').trim();
     const start = rest.match(/Service Start:[^\n]+/i);
     const end   = rest.match(/Service End:[^\n]+/i);
     rest = rest.replace(/Service Start:[^\n]+/ig,'')
@@ -148,21 +75,79 @@
     return out.trim();
   }
 
+  function getItems() {
+    return [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')]
+      .map(tr => {
+        const ta = tr.querySelector('textarea');
+        const qty = tr.querySelector('input[name^="qty"]');
+        if (!ta || !qty) return null;
+
+        const name =
+          tr.querySelector('input[id^="productName"]')?.value ||
+          tr.querySelector('td')?.innerText.split('\n')[0] ||
+          'Produkt';
+
+        const sla =
+          tr.querySelector('[data-fieldname="cf_907"]')?.innerText ||
+          tr.innerText.match(/SLA\s*:\s*(.*)/i)?.[1] ||
+          '—';
+
+        const country =
+          tr.querySelector('[data-fieldname="cf_913"]')?.innerText ||
+          tr.innerText.match(/Country\s*:\s*(.*)/i)?.[1] ||
+          '—';
+
+        const desc = ta.value;
+        const sns = extractSN(desc);
+        const start = desc.match(/Service Start:[^\n]+/i)?.[0] || '';
+        const end   = desc.match(/Service End:[^\n]+/i)?.[0] || '';
+
+        return { tr, ta, qty, name, sla, country, sns, start, end };
+      })
+      .filter(Boolean);
+  }
+
   /* ===========================
-     APPLY
+     UI PANEL
   =========================== */
 
-  document.getElementById('sn_undo').onclick = undo;
+  const panel = document.createElement('div');
+  panel.style.cssText = `
+    position:fixed; top:12px; right:12px; z-index:2147483647;
+    background:#111; color:#eaeaea; padding:12px;
+    border-radius:10px; width:420px;
+    box-shadow:0 8px 28px rgba(0,0,0,.45);
+    font:13px system-ui;
+  `;
+  panel.innerHTML = `
+    <b>SN-Abgleich</b>
+    <label>Behalten</label><textarea id="sn_keep"></textarea>
+    <label>Entfernen</label><textarea id="sn_remove"></textarea>
+    <label>Hinzufügen</label><textarea id="sn_add"></textarea>
+    <button id="sn_preview">Preview</button>
+    <button id="sn_apply">Apply</button>
+    <button id="sn_undo" style="background:#444">Undo</button>
+  `;
+  document.body.appendChild(panel);
 
-  document.getElementById('sn_apply').onclick = () => {
+  panel.querySelectorAll('textarea').forEach(t=>{
+    t.style.cssText='width:100%;height:60px;background:#1a1a1a;color:#eaeaea;border:1px solid #333;border-radius:6px;padding:6px';
+  });
 
+  panel.querySelectorAll('button').forEach(b=>{
+    b.style.cssText='margin-top:8px;width:100%;background:#1f6feb;color:#fff;border:0;border-radius:8px;padding:8px;cursor:pointer';
+  });
+
+  /* ===========================
+     PREVIEW + APPLY
+  =========================== */
+
+  function buildPlan() {
     const keep = splitSN(document.getElementById('sn_keep').value);
     const remove = splitSN(document.getElementById('sn_remove').value);
     const add = splitSN(document.getElementById('sn_add').value);
 
     const items = getItems();
-    takeSnapshot(items);
-
     const allExisting = new Map();
     items.forEach(it => it.sns.forEach(sn => allExisting.set(sn, it)));
 
@@ -173,59 +158,66 @@
       )
     );
 
-    if (blocked.size) {
-      alert('⚠️ Konflikt – diese Seriennummern werden ignoriert:\n' + [...blocked].join(', '));
-    }
+    return { keep, remove, add, items, allExisting, blocked };
+  }
 
-    /* === REMOVE === */
+  function preview() {
+    const { remove, add, blocked } = buildPlan();
+    alert(
+      `Preview:\n\n` +
+      `➖ Entfernen:\n${remove.filter(sn=>!blocked.has(sn)).join(', ') || '—'}\n\n` +
+      `➕ Hinzufügen:\n${add.filter(sn=>!blocked.has(sn)).join(', ') || '—'}\n\n` +
+      (blocked.size ? `⚠️ Blockiert:\n${[...blocked].join(', ')}` : '')
+    );
+  }
+
+  function apply() {
+    const plan = buildPlan();
+    const { items, remove, add, blocked, allExisting } = plan;
+    takeSnapshot(items);
+
+    /* REMOVE */
     items.forEach(it => {
-      let sns = it.sns.filter(sn => {
-        if (blocked.has(sn)) return true;
-        if (remove.includes(sn)) return false;
-        return true;
-      });
-
-      if (sns.length !== it.sns.length) {
-        it.ta.value = rebuildDescription(it.ta.value, sns);
-        it.qty.value = sns.length;
-        it.ta.dispatchEvent(new Event('change', { bubbles:true }));
-        it.qty.dispatchEvent(new Event('change', { bubbles:true }));
-        it.sns = sns;
+      const next = it.sns.filter(sn => !remove.includes(sn) || blocked.has(sn));
+      if (next.length !== it.sns.length) {
+        it.ta.value = rebuildDescription(it.ta.value, next);
+        it.qty.value = next.length;
+        it.ta.dispatchEvent(new Event('change',{bubbles:true}));
+        it.qty.dispatchEvent(new Event('change',{bubbles:true}));
+        it.sns = next;
       }
     });
 
-    /* === ADD === */
+    /* ADD → MULTI ASSIGN */
     const cleanAdd = add.filter(sn =>
-      !blocked.has(sn) &&
-      !keep.includes(sn) &&
-      !remove.includes(sn)
+      !blocked.has(sn) && !allExisting.has(sn)
     );
 
-    cleanAdd.forEach(sn => {
-      if (allExisting.has(sn)) {
-        alert(`⚠️ Seriennummer ${sn} existiert bereits in "${allExisting.get(sn).name}" und kann nicht doppelt zugeordnet werden.`);
-        return;
-      }
+    if (!cleanAdd.length) return;
 
-      const choice = prompt(
-        `Neue Seriennummer: ${sn}\n\n` +
-        items.map((p,i)=>`${i+1}) ${p.name} | ${p.start} ${p.end}`).join('\n') +
-        `\n\nNummer eingeben oder abbrechen`
-      );
-      if (!choice) return;
+    const choice = prompt(
+      `Neue Seriennummern:\n${cleanAdd.join(', ')}\n\n` +
+      items.map((p,i)=>
+        `${i+1}) ${p.name} | ${p.sla} | ${p.country} | ${p.start} ${p.end} | Qty:${p.sns.length}`
+      ).join('\n') +
+      `\n\nNummer eingeben oder abbrechen`
+    );
 
-      const idx = parseInt(choice,10)-1;
-      const it = items[idx];
-      if (!it) return;
+    if (!choice) return;
 
-      it.sns.push(sn);
-      it.sns = uniq(it.sns);
+    const idx = parseInt(choice,10)-1;
+    const it = items[idx];
+    if (!it) return;
 
-      it.ta.value = rebuildDescription(it.ta.value, it.sns);
-      it.qty.value = it.sns.length;
-      it.ta.dispatchEvent(new Event('change',{bubbles:true}));
-      it.qty.dispatchEvent(new Event('change',{bubbles:true}));
-    });
-  };
+    it.sns = uniq(it.sns.concat(cleanAdd));
+    it.ta.value = rebuildDescription(it.ta.value, it.sns);
+    it.qty.value = it.sns.length;
+    it.ta.dispatchEvent(new Event('change',{bubbles:true}));
+    it.qty.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+
+  document.getElementById('sn_preview').onclick = preview;
+  document.getElementById('sn_apply').onclick = apply;
+  document.getElementById('sn_undo').onclick = undo;
 
 })();
