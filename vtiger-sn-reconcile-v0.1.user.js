@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.5.0
-// @description  SN-Abgleich mit Multi-Zuordnung, Preview-Diff, Undo und SLA/Country Anzeige
+// @version      0.5.1
+// @description  SN-Abgleich mit Preview, Undo und Mehrfach-Zuordnung mehrerer Seriennummern auf mehrere Positionen
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -87,22 +87,19 @@
           tr.querySelector('td')?.innerText.split('\n')[0] ||
           'Produkt';
 
-        const sla =
-          tr.querySelector('[data-fieldname="cf_907"]')?.innerText ||
-          tr.innerText.match(/SLA\s*:\s*(.*)/i)?.[1] ||
-          '—';
-
-        const country =
-          tr.querySelector('[data-fieldname="cf_913"]')?.innerText ||
-          tr.innerText.match(/Country\s*:\s*(.*)/i)?.[1] ||
-          '—';
-
         const desc = ta.value;
         const sns = extractSN(desc);
+
         const start = desc.match(/Service Start:[^\n]+/i)?.[0] || '';
         const end   = desc.match(/Service End:[^\n]+/i)?.[0] || '';
 
-        return { tr, ta, qty, name, sla, country, sns, start, end };
+        const sla =
+          tr.innerText.match(/SLA\s*:\s*([^\n]+)/i)?.[1] || '—';
+
+        const country =
+          tr.innerText.match(/Country\s*:\s*([^\n]+)/i)?.[1] || '—';
+
+        return { tr, ta, qty, name, sla, country, start, end, sns };
       })
       .filter(Boolean);
   }
@@ -139,15 +136,15 @@
   });
 
   /* ===========================
-     PREVIEW + APPLY
+     PREVIEW
   =========================== */
 
   function buildPlan() {
     const keep = splitSN(document.getElementById('sn_keep').value);
     const remove = splitSN(document.getElementById('sn_remove').value);
     const add = splitSN(document.getElementById('sn_add').value);
-
     const items = getItems();
+
     const allExisting = new Map();
     items.forEach(it => it.sns.forEach(sn => allExisting.set(sn, it)));
 
@@ -171,6 +168,10 @@
     );
   }
 
+  /* ===========================
+     APPLY
+  =========================== */
+
   function apply() {
     const plan = buildPlan();
     const { items, remove, add, blocked, allExisting } = plan;
@@ -188,32 +189,44 @@
       }
     });
 
-    /* ADD → MULTI ASSIGN */
+    /* ADD → MULTI MATRIX */
     const cleanAdd = add.filter(sn =>
       !blocked.has(sn) && !allExisting.has(sn)
     );
-
     if (!cleanAdd.length) return;
 
-    const choice = prompt(
-      `Neue Seriennummern:\n${cleanAdd.join(', ')}\n\n` +
-      items.map((p,i)=>
-        `${i+1}) ${p.name} | ${p.sla} | ${p.country} | ${p.start} ${p.end} | Qty:${p.sns.length}`
-      ).join('\n') +
-      `\n\nNummer eingeben oder abbrechen`
+    const table = cleanAdd.map(sn =>
+      `${sn}\n` +
+      items.map((p,i)=>`  ${i+1}) ${p.name} | ${p.sla} | ${p.country} | ${p.start} – ${p.end}`).join('\n')
+    ).join('\n\n');
+
+    const answer = prompt(
+      `Zuordnung:\n` +
+      `Format: SN=Produktnummer\n\n` +
+      table +
+      `\n\nBeispiel:\nSN123=1\nSN124=2`
     );
+    if (!answer) return;
 
-    if (!choice) return;
+    const lines = answer.split('\n').map(T).filter(Boolean);
+    const assignments = {};
 
-    const idx = parseInt(choice,10)-1;
-    const it = items[idx];
-    if (!it) return;
+    lines.forEach(l=>{
+      const m=l.match(/^(.+?)\s*=\s*(\d+)$/);
+      if(!m)return;
+      assignments[m[1]] = parseInt(m[2],10)-1;
+    });
 
-    it.sns = uniq(it.sns.concat(cleanAdd));
-    it.ta.value = rebuildDescription(it.ta.value, it.sns);
-    it.qty.value = it.sns.length;
-    it.ta.dispatchEvent(new Event('change',{bubbles:true}));
-    it.qty.dispatchEvent(new Event('change',{bubbles:true}));
+    Object.entries(assignments).forEach(([sn,idx])=>{
+      const it = items[idx];
+      if(!it || it.sns.includes(sn))return;
+      it.sns.push(sn);
+      it.sns = uniq(it.sns);
+      it.ta.value = rebuildDescription(it.ta.value, it.sns);
+      it.qty.value = it.sns.length;
+      it.ta.dispatchEvent(new Event('change',{bubbles:true}));
+      it.qty.dispatchEvent(new Event('change',{bubbles:true}));
+    });
   }
 
   document.getElementById('sn_preview').onclick = preview;
