@@ -1,273 +1,217 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.1.2
-// @description  Show product number (PROxxxxx) and audit maintenance descriptions in VTiger line items
+// @version      1.2.0
+// @description  Meta overlay + maintenance auditor with tooltip, DE/EN toggle and manual standardization
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
-// @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-meta-overlay.user.js
-// @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-meta-overlay.user.js
 // ==/UserScript==
 
 (async function () {
   'use strict';
 
   /* ===============================
-     MODE / MODULE DETECTION
+     MODULE DETECTION
      =============================== */
 
-  const SUPPORTED_MODULES = [
-    'Quotes',
-    'SalesOrder',
-    'Invoice',
-    'PurchaseOrder',
-    'Products'
-  ];
-
-  const isEdit =
-    location.href.includes('view=Edit') &&
-    new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`).test(location.href);
-
-  const isDetail =
-    location.href.includes('view=Detail') &&
-    new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`).test(location.href);
-
-  if (!isEdit && !isDetail) return;
+  const SUPPORTED_MODULES = ['Quotes','SalesOrder','Invoice','PurchaseOrder','Products'];
 
   const currentModule =
     location.href.match(new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`))?.[1] || '';
 
+  const isEdit =
+    location.href.includes('view=Edit') &&
+    SUPPORTED_MODULES.includes(currentModule);
+
+  if (!isEdit) return;
+
   /* ===============================
-     CONFIG
+     LANGUAGE
      =============================== */
 
-  const VENDOR_COLORS = {
-    "Technogroup": "#2563eb",
-    "Park Place": "#16a34a",
-    "ITRIS": "#9333ea",
-    "IDS": "#ea580c",
-    "DIS": "#dc2626",
-    "Axians": "#0891b2"
-  };
+  let currentLang = 'de';
 
-  function colorForVendor(vendor) {
-    if (!vendor) return "#6b7280";
-    const v = vendor.toLowerCase();
-    for (const key of Object.keys(VENDOR_COLORS)) {
-      if (v.includes(key.toLowerCase())) return VENDOR_COLORS[key];
+  const I18N = {
+    de: {
+      ok: '🟢 Wartung: OK',
+      quoteOk: '🟡 Wartung: Quote (TBA ok)',
+      noDesc: '🔴 Wartung: Keine Beschreibung',
+      noSn: '🟡 Wartung: Keine S/N',
+      noDates: '🔴 Wartung: Fehlende Service-Daten',
+      qtyMismatch: (q,s)=>`🟡 Wartung: Quantity (${q}) ≠ S/N (${s})`,
+      start: 'Service Start',
+      end: 'Service Ende',
+      location: 'Standort',
+      incl: 'inkl.'
+    },
+    en: {
+      ok: '🟢 Maintenance: OK',
+      quoteOk: '🟡 Maintenance: Quote (TBA ok)',
+      noDesc: '🔴 Maintenance: No description',
+      noSn: '🟡 Maintenance: No S/N',
+      noDates: '🔴 Maintenance: Missing service dates',
+      qtyMismatch: (q,s)=>`🟡 Maintenance: Qty (${q}) ≠ S/N (${s})`,
+      start: 'Service Start',
+      end: 'Service End',
+      location: 'Location',
+      incl: 'incl.'
     }
-    return "#6b7280";
-  }
+  };
 
   /* ===============================
      UTILITIES
      =============================== */
 
-  const mem = new Map();
-  const S = s => (s || '').toString().trim();
-
   const debounce = (fn, ms) => {
-    let t;
-    return (...a) => {
-      clearTimeout(t);
-      t = setTimeout(() => fn(...a), ms);
-    };
+    let t; return (...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};
   };
 
-  function getQuantity(tr, rn) {
-    const q =
-      tr.querySelector(`#qty${rn}`) ||
-      tr.querySelector(`#quantity${rn}`) ||
-      tr.querySelector(`input[name="qty${rn}"]`) ||
-      tr.querySelector(`input[name="quantity${rn}"]`);
-    const v = parseInt(q?.value, 10);
-    return Number.isFinite(v) ? v : 0;
-  }
-
-  /* ===============================
-     META FETCH
-     =============================== */
-
-  async function fetchMeta(url) {
-    if (!url) return {};
-    if (mem.has(url)) return mem.get(url);
-
-    try {
-      const r = await fetch(url, { credentials: 'same-origin' });
-      const h = await r.text();
-      const dp = new DOMParser().parseFromString(h, 'text/html');
-
-      const getVal = label => {
-        const lab = [...dp.querySelectorAll('[id^="Products_detailView_fieldLabel_"]')]
-          .find(l => S(l.textContent).toLowerCase().includes(label));
-        if (!lab) return '';
-        const v = dp.getElementById(lab.id.replace('fieldLabel', 'fieldValue'));
-        return S(v ? v.textContent : '');
-      };
-
-      const productNo =
-        S(dp.querySelector('.product_no.value')?.textContent) || '';
-
-      const meta = {
-        pn: productNo,
-        vendor: getVal('vendor'),
-        sla: getVal('sla'),
-        duration: getVal('duration'),
-        country: getVal('country')
-      };
-
-      mem.set(url, meta);
-      return meta;
-    } catch {
-      return {};
-    }
-  }
-
-  /* ===============================
-     AUDITOR (LIGHTWEIGHT)
-     =============================== */
-
   function extractSerials(desc) {
-    const out = [];
-    const re = /S\/N:\s*([^\n]+)/gi;
+    const out=[];
+    const re=/S\/N:\s*([^\n]+)/gi;
     let m;
-    while ((m = re.exec(desc))) {
-      m[1].split(/[,;\/]/).map(s => s.trim()).filter(Boolean).forEach(sn => out.push(sn));
+    while((m=re.exec(desc))){
+      m[1].split(/[,;\/]/).map(s=>s.trim()).filter(Boolean).forEach(sn=>out.push(sn));
     }
     return [...new Set(out)];
   }
 
-  function auditMaintenance(desc, qty, productName) {
-    if (!desc) return "🔴 Wartung: Keine Beschreibung";
+  function extractDate(desc,label){
+    const r=new RegExp(`${label}:\\s*(\\d{2}\\.\\d{2}\\.\\d{4}|tba|\\[nicht angegeben\\])`,'i');
+    return desc.match(r)?.[1]||'';
+  }
 
-    const serials = extractSerials(desc);
-    const hasStart = /Service\s+Start:/i.test(desc);
-    const hasEnd = /Service\s+(Ende|End):/i.test(desc);
-    const isFasAff = /\b(FAS|AFF|ASA)\d+/i.test(productName || '');
-
-    if (currentModule === "Quotes" && (!hasStart || !hasEnd)) {
-      return "🟡 Wartung: Quote (TBA ok)";
-    }
-
-    if (!serials.length) return "🟡 Wartung: Keine S/N";
-    if (!hasStart || !hasEnd) return "🔴 Wartung: Fehlende Service-Daten";
-
-    if (!(isFasAff && qty === 1) && serials.length !== qty) {
-      return `🟡 Wartung: Quantity (${qty}) ≠ S/N (${serials.length})`;
-    }
-
-    return "🟢 Wartung: OK";
+  function getQuantity(tr,rn){
+    const q=tr.querySelector(`#qty${rn},#quantity${rn},input[name="qty${rn}"],input[name="quantity${rn}"]`);
+    const v=parseInt(q?.value,10);
+    return Number.isFinite(v)?v:0;
   }
 
   /* ===============================
-     RENDER HELPERS
+     AUDIT
      =============================== */
 
-  function ensureInfo(td) {
-    let d = td.querySelector('.vt-prodinfo');
-    if (!d) {
-      d = document.createElement('div');
-      d.className = 'vt-prodinfo';
-      d.style.cssText = 'margin-top:6px;font-size:12px;white-space:pre-wrap';
-      td.appendChild(d);
+  function audit(desc,qty,productName){
+    const t=I18N[currentLang];
+    if(!desc) return {text:t.noDesc};
+
+    const sn=extractSerials(desc);
+    const start=extractDate(desc,t.start);
+    const end=extractDate(desc,t.end);
+    const fasAff=/\b(FAS|AFF|ASA)\d+/i.test(productName||'');
+
+    if(currentModule==='Quotes' && (!start||!end)){
+      return {text:t.quoteOk,tooltip:{sn,start,end,qty}};
     }
-    return d;
+    if(!sn.length) return {text:t.noSn,tooltip:{sn,start,end,qty}};
+    if(!start||!end) return {text:t.noDates,tooltip:{sn,start,end,qty}};
+    if(!(fasAff&&qty===1)&&sn.length!==qty){
+      return {text:t.qtyMismatch(qty,sn.length),tooltip:{sn,start,end,qty}};
+    }
+    return {text:t.ok,tooltip:{sn,start,end,qty}};
   }
 
-  function ensureAuditor(info) {
-    let d = info.querySelector('.hw24-auditor');
-    if (!d) {
-      d = document.createElement('div');
-      d.className = 'hw24-auditor';
-      d.style.cssText = 'margin-top:4px;font-size:11px;font-weight:bold';
+  /* ===============================
+     UI HELPERS
+     =============================== */
+
+  function ensureAuditor(info){
+    let d=info.querySelector('.hw24-auditor');
+    if(!d){
+      d=document.createElement('div');
+      d.className='hw24-auditor';
+      d.style.cssText='margin-top:4px;font-size:11px;font-weight:bold;cursor:help';
       info.appendChild(d);
     }
     return d;
   }
 
-  function renderInfo(info, meta) {
-    info.innerHTML = `
-      <span style="
-        display:inline-block;
-        padding:2px 6px;
-        border-radius:999px;
-        background:${colorForVendor(meta.vendor)};
-        color:#fff;
-        font-size:11px;
-        margin-right:6px
-      ">${meta.vendor || '—'}</span>
-      PN: ${meta.pn || '—'}
-      • SLA: ${meta.sla || '—'}
-      • Duration: ${meta.duration || '—'}
-      • Country: ${meta.country || '—'}
-    `;
+  function setTooltip(el,data){
+    el.title=
+      `S/N: ${data.sn.join(', ')||'—'}\n`+
+      `Qty: ${data.qty}\n`+
+      `Start: ${data.start||'—'}\n`+
+      `End: ${data.end||'—'}`;
   }
 
   /* ===============================
-     CORE: EDIT MODE
+     STANDARDIZE (PREVIEW ONLY)
      =============================== */
 
-  async function processEdit() {
-    const tbl = document.querySelector('#lineItemTab');
-    if (!tbl) return;
+  function standardize(desc){
+    const sn=extractSerials(desc);
+    const start=extractDate(desc,I18N[currentLang].start);
+    const end=extractDate(desc,I18N[currentLang].end);
 
-    const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
-    const vendorsSeen = new Set();
+    let out=`S/N: ${sn.join(', ')}`;
+    if(start) out+=`\n${I18N[currentLang].start}: ${start}`;
+    if(end) out+=`\n${I18N[currentLang].end}: ${end}`;
+    return out;
+  }
 
-    for (const tr of rows) {
-      const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
-      const sig = [
-        tr.querySelector('.purchaseCost')?.value,
-        tr.querySelector('textarea')?.value,
-        tr.querySelector('input[name^="hdnProductId"]')?.value
-      ].join('|');
+  function showPreview(textarea){
+    const orig=textarea.value;
+    const std=standardize(orig);
 
-      if (tr.dataset.vtSig === sig) continue;
-      tr.dataset.vtSig = sig;
+    if(orig===std) return alert('Bereits standardisiert');
 
-      const nameEl =
-        tr.querySelector('#productName' + rn) ||
-        tr.querySelector('input[id^="productName"]') ||
-        tr.querySelector('a[href*="module=Products"]');
-
-      const td = nameEl?.closest('td');
-      if (!td) continue;
-
-      const hid =
-        tr.querySelector(`input[name="hdnProductId${rn}"]`) ||
-        tr.querySelector('input[name^="hdnProductId"]');
-      if (!hid?.value) continue;
-
-      const meta = await fetchMeta(`index.php?module=Products&view=Detail&record=${hid.value}`);
-      if (meta.vendor) vendorsSeen.add(meta.vendor);
-
-      const info = ensureInfo(td);
-      renderInfo(info, meta);
-
-      const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
-      const qty = getQuantity(tr, rn);
-      const auditor = ensureAuditor(info);
-      auditor.textContent = auditMaintenance(desc, qty, meta.pn);
-    }
-
-    const warn = document.getElementById('hw24-meta-warning');
-    if (warn) {
-      warn.textContent =
-        vendorsSeen.size > 1 ? `⚠️ Gemischte Vendors (${vendorsSeen.size})` : '';
-      warn.style.color = "#facc15";
+    if(confirm(`Original:\n\n${orig}\n\nNeu:\n\n${std}\n\nÜbernehmen?`)){
+      textarea.value=std;
+      textarea.dispatchEvent(new Event('change',{bubbles:true}));
     }
   }
 
   /* ===============================
-     BOOTSTRAP
+     PROCESS
      =============================== */
 
-  if (isEdit) {
-    await processEdit();
-    const rerun = debounce(processEdit, 700);
-    const tbl = document.querySelector('#lineItemTab');
-    if (tbl) new MutationObserver(rerun).observe(tbl, { childList: true, subtree: true });
+  async function process(){
+    const rows=[...document.querySelectorAll('#lineItemTab tr.lineItemRow[id^="row"],tr.inventoryRow')];
+
+    rows.forEach(tr=>{
+      const rn=tr.getAttribute('data-row-num')||tr.id.replace('row','');
+      const descEl=tr.querySelector('textarea[name*="comment"]');
+      if(!descEl) return;
+
+      const productName=tr.querySelector(`#productName${rn}`)?.value||'';
+      const qty=getQuantity(tr,rn);
+
+      const info=tr.querySelector('.vt-prodinfo');
+      if(!info) return;
+
+      const res=audit(descEl.value,qty,productName);
+      const aud=ensureAuditor(info);
+      aud.textContent=res.text;
+      if(res.tooltip) setTooltip(aud,res.tooltip);
+
+      if(!aud.querySelector('button')){
+        const b=document.createElement('button');
+        b.textContent='✎';
+        b.style.cssText='margin-left:6px;font-size:10px';
+        b.onclick=()=>showPreview(descEl);
+        aud.appendChild(b);
+      }
+    });
   }
+
+  /* ===============================
+     PANEL
+     =============================== */
+
+  const panel=document.createElement('div');
+  panel.style.cssText='position:fixed;bottom:16px;right:16px;z-index:2147483647;background:#111;color:#fff;padding:8px;border-radius:8px;font-size:12px';
+  panel.innerHTML=`
+    <button id="lang">DE / EN</button>
+  `;
+  panel.querySelector('#lang').onclick=()=>{
+    currentLang=currentLang==='de'?'en':'de';
+    process();
+  };
+  document.body.appendChild(panel);
+
+  process();
+  new MutationObserver(debounce(process,600))
+    .observe(document.querySelector('#lineItemTab'),{childList:true,subtree:true});
 
 })();
