@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.7.4
-// @description  Stable SN panel + multi-SN add dialog (no matrix), full logic enabled
+// @version      0.7.5
+// @description  Add dialog shows product metadata (manufacturer, SLA, country, duration, runtime)
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -12,7 +12,7 @@
   'use strict';
 
   /* =============================
-     GUARD: Edit Mode only
+     GUARD
      ============================= */
   if (
     !location.href.includes('view=Edit') ||
@@ -34,6 +34,26 @@
     );
 
   /* =============================
+     Helpers: extract fields
+     ============================= */
+  function getInputValue(tr, selectors){
+    for(const sel of selectors){
+      const el = tr.querySelector(sel);
+      if(el && S(el.value || el.textContent)) {
+        return S(el.value || el.textContent);
+      }
+    }
+    return '-';
+  }
+
+  function extractRuntimeFromDesc(desc){
+    const start = desc.match(/Service Start\s*:\s*([0-9.\-]+)/i);
+    const end   = desc.match(/Service Ende\s*:\s*([0-9.\-]+)/i);
+    if(start && end) return `${start[1]} → ${end[1]}`;
+    return '-';
+  }
+
+  /* =============================
      Line Items
      ============================= */
   function getLineItems(){
@@ -44,11 +64,39 @@
           tr.querySelector('textarea[name*="comment"], textarea[name*="description"]');
         const qtyEl = tr.querySelector('input[name^="qty"]');
         const desc = S(descEl?.value);
+
         const m = desc.match(/S\/N\s*:\s*([^\n\r]+)/i);
         const sns = m ? parseList(m[1]) : [];
+
         const prodName =
           S(tr.querySelector(`#productName${rn}`)?.textContent) || `Position ${rn}`;
-        return { rn, tr, descEl, qtyEl, desc, sns, prodName };
+
+        const manufacturer = getInputValue(tr, [
+          'input[name*="manufacturer"]',
+          'select[name*="manufacturer"]'
+        ]);
+
+        const sla = getInputValue(tr, [
+          'input[name*="sla"]',
+          'select[name*="sla"]'
+        ]);
+
+        const country = getInputValue(tr, [
+          'input[name*="country"]',
+          'select[name*="country"]'
+        ]);
+
+        const durationMonths = getInputValue(tr, [
+          'input[name*="duration"]',
+          'input[name*="months"]'
+        ]);
+
+        const runtime = extractRuntimeFromDesc(desc);
+
+        return {
+          rn, tr, descEl, qtyEl, desc, sns, prodName,
+          manufacturer, sla, country, durationMonths, runtime
+        };
       });
   }
 
@@ -64,7 +112,7 @@
   }
 
   /* =============================
-     PANEL (guaranteed visible)
+     PANEL (unchanged, stable)
      ============================= */
   function injectPanel(){
     if ($('hw24-sn-panel')) return;
@@ -72,15 +120,10 @@
     const panel = document.createElement('div');
     panel.id = 'hw24-sn-panel';
     panel.style.cssText = `
-      position:fixed;
-      bottom:20px;
-      left:20px;
-      width:360px;
-      padding:12px;
-      background:#111;
-      color:#fff;
-      border:1px solid #333;
-      border-radius:10px;
+      position:fixed; bottom:20px; left:20px;
+      width:360px; padding:12px;
+      background:#111; color:#fff;
+      border:1px solid #333; border-radius:10px;
       box-shadow:0 8px 24px rgba(0,0,0,.5);
       z-index:2147483647;
       font-family:system-ui,Segoe UI,Roboto,Arial;
@@ -117,9 +160,6 @@
     document.body.appendChild(panel);
   }
 
-  /* =============================
-     Ensure panel persists
-     ============================= */
   function initPanel(){
     injectPanel();
     const obs = new MutationObserver(()=>{
@@ -156,7 +196,7 @@
   });
 
   /* =============================
-     Preview
+     Preview (unchanged)
      ============================= */
   $('sn-preview').onclick = ()=>{
     const items = getLineItems();
@@ -181,25 +221,25 @@
   };
 
   /* =============================
-     Add Dialog (multi SN → one position)
+     Add Dialog with metadata
      ============================= */
   function openAddDialog(addList, items, onDone){
     let remaining = [...addList];
 
     const dlg = document.createElement('div');
     dlg.style.cssText = `
-      position:fixed;inset:0;
+      position:fixed; inset:0;
       background:rgba(0,0,0,.6);
       z-index:2147483647;
-      display:flex;align-items:center;justify-content:center;
+      display:flex; align-items:center; justify-content:center;
     `;
 
     const box = document.createElement('div');
     box.style.cssText = `
-      background:#fff;color:#111;
-      width:90%;max-width:900px;
-      max-height:80vh;overflow:auto;
-      padding:16px;border-radius:10px;
+      background:#fff; color:#111;
+      width:90%; max-width:1000px;
+      max-height:80vh; overflow:auto;
+      padding:16px; border-radius:10px;
       font-family:system-ui,Segoe UI,Roboto,Arial;
     `;
 
@@ -224,10 +264,23 @@
 
       const prodWrap = document.createElement('div');
       prodWrap.innerHTML = '<b>Position</b>';
+
       items.forEach(it=>{
         const d = document.createElement('div');
-        d.innerHTML =
-          `<label><input type="radio" name="hw24-sn-target" value="${it.rn}"> ${it.prodName}</label>`;
+        d.style.cssText = 'border:1px solid #ccc;border-radius:6px;padding:6px;margin:6px 0';
+        d.innerHTML = `
+          <label>
+            <input type="radio" name="hw24-sn-target" value="${it.rn}">
+            <b>${it.prodName}</b>
+          </label>
+          <div style="font-size:12px;margin-top:4px">
+            Manufacturer: ${it.manufacturer} |
+            SLA: ${it.sla} |
+            Country: ${it.country} |
+            Duration (Months): ${it.durationMonths} |
+            Laufzeit: ${it.runtime}
+          </div>
+        `;
         prodWrap.appendChild(d);
       });
 
@@ -270,7 +323,6 @@
     const add  = parseList($('sn-add').value)
       .filter(sn=>!keep.has(sn) && !idx.has(sn));
 
-    // Entfernen
     items.forEach(it=>{
       it.sns = it.sns.filter(sn=>!rem.includes(sn));
     });
