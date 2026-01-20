@@ -1,15 +1,13 @@
-// ==UserScript==
-// @name         VTiger Maintenance Description Auditor (v0.1)
-// @namespace    hw24.vtiger.maintenance.desc.auditor
-// @version      0.1.0
-// @description  Analyze & preview maintenance descriptions (Wartung) in VTiger line items. No auto-write.
-// @match        https://vtiger.hardwarewartung.com/index.php*
-// @grant        none
-// @run-at       document-end
-// ==/UserScript==
+/*
+ * VTiger Maintenance Description Auditor – Core v0.1
+ * Loaded via Tampermonkey @require
+ * Analysis-only (no auto-write)
+ */
 
 (() => {
   "use strict";
+
+  console.log("[HW24] Maintenance Desc Auditor core v0.1 loaded");
 
   /***********************
    * CONFIG
@@ -38,7 +36,6 @@
   /***********************
    * HELPERS
    ***********************/
-  const $ = sel => document.querySelector(sel);
   const $$ = sel => Array.from(document.querySelectorAll(sel));
 
   function detectModule() {
@@ -81,7 +78,10 @@
   }
 
   function extractServiceDate(text, type) {
-    const re = new RegExp(`Service\\s+${type}:\\s*(\\d{2}\\.\\d{2}\\.\\d{4}|tba|\\[nicht angegeben\\])`, "i");
+    const re = new RegExp(
+      `Service\\s+${type}:\\s*(\\d{2}\\.\\d{2}\\.\\d{4}|tba|\\[nicht angegeben\\])`,
+      "i"
+    );
     const m = text.match(re);
     return m ? m[1] : null;
   }
@@ -97,7 +97,6 @@
     const normalized = normalizeColonSpacing(desc);
 
     const serials = extractSerials(normalized);
-
     const serviceStart = extractServiceDate(normalized, "Start");
     const serviceEnd = extractServiceDate(normalized, "(Ende|End)");
 
@@ -112,31 +111,12 @@
       return { status: "ok", reason: "match" };
     })();
 
-    return {
-      serials,
-      serviceStart,
-      serviceEnd,
-      qtyCheck
-    };
+    return { serials, serviceStart, serviceEnd, qtyCheck };
   }
 
   /***********************
    * UI
    ***********************/
-  function injectLanguageToggle(container) {
-    const toggle = document.createElement("select");
-    toggle.innerHTML = `
-      <option value="de">DE</option>
-      <option value="en">EN</option>
-    `;
-    toggle.value = currentLanguage;
-    toggle.style.marginLeft = "6px";
-    toggle.addEventListener("change", e => {
-      currentLanguage = e.target.value;
-    });
-    container.appendChild(toggle);
-  }
-
   function buildBadge(result, moduleName) {
     if (moduleName === "Quote" && (!result.serviceStart || !result.serviceEnd)) {
       return "🟡 Quote (TBA ok)";
@@ -150,14 +130,12 @@
     return "🟢 OK";
   }
 
-  function injectRowUI(row, parsed, moduleName) {
-    const cell = document.createElement("div");
-    cell.style.marginTop = "4px";
-    cell.style.fontSize = "11px";
-
-    cell.textContent = buildBadge(parsed, moduleName);
-
-    row.appendChild(cell);
+  function injectRowUI(container, parsed, moduleName) {
+    const badge = document.createElement("div");
+    badge.style.marginTop = "4px";
+    badge.style.fontSize = "11px";
+    badge.textContent = buildBadge(parsed, moduleName);
+    container.appendChild(badge);
   }
 
   /***********************
@@ -169,9 +147,9 @@
     const moduleName = detectModule();
     if (moduleName === "Unknown") return;
 
-    console.log("[HW24] Maintenance Desc Auditor v0.1 running in", moduleName);
+    console.log("[HW24] Auditor running in", moduleName);
 
-    const rows = $$("tr.lineItemRow"); // vtiger typical
+    const rows = $$("tr.lineItemRow");
     if (!rows.length) return;
 
     rows.forEach(row => {
@@ -181,14 +159,15 @@
 
       if (!descEl || !qtyEl) return;
 
-      const desc = descEl.value || "";
-      const qty = parseInt(qtyEl.value, 10) || 0;
-      const productName = nameEl ? nameEl.value : "";
-
-      // Wartung only
+      // einfache Wartungs-Erkennung (v0.1)
       if (!/wartung/i.test(row.innerText)) return;
 
-      const parsed = parseDescription(desc, productName, qty);
+      const parsed = parseDescription(
+        descEl.value || "",
+        nameEl ? nameEl.value : "",
+        parseInt(qtyEl.value, 10) || 0
+      );
+
       injectRowUI(descEl.parentElement, parsed, moduleName);
     });
   }
