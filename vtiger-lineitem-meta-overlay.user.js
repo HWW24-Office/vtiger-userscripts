@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.0.2
-// @description  Auto-run line item meta overlay in Edit mode with toggle, status badge, vendor colors and mixed-vendor warning; button-only in Detail view. Meta data is always fetched live.
+// @version      1.0.3
+// @description  Show product number (PROxxxxx) instead of product name in line item meta overlay
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -54,8 +54,8 @@
      =============================== */
 
   const mem = new Map(); // in-memory cache per page load only
-
   const S = s => (s || '').toString().trim();
+
   const debounce = (fn, ms) => {
     let t;
     return (...a) => {
@@ -85,15 +85,19 @@
         return S(v ? v.textContent : '');
       };
 
+      /* ✅ Product Number (PROxxxxx) */
+      const productNo =
+        S(dp.querySelector('.product_no.value')?.textContent) || '';
+
       const meta = {
-        pn: getVal('product'),
+        pn: productNo,
         vendor: getVal('vendor'),
         sla: getVal('sla'),
         duration: getVal('duration'),
         country: getVal('country')
       };
 
-      mem.set(url, meta); // cache only for this page load
+      mem.set(url, meta);
       return meta;
     } catch {
       return {};
