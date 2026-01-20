@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.7.2-fix
-// @description  Fixed preview/apply logic, strict SN integrity, stable add dialog
+// @version      0.7.3
+// @description  Fix UI color regression and re-enable add dialog (step 1)
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -16,29 +16,102 @@
     !/module=(Quotes|SalesOrder|Invoice|PurchaseOrder)/.test(location.href)
   ) return;
 
-  /* ========== Utilities ========== */
+  /* =========================
+     HARD CSS RESET (FINAL FIX)
+     ========================= */
+  const css = document.createElement('style');
+  css.textContent = `
+    /* PANEL */
+    #hw24-sn-panel {
+      background:#111 !important;
+      color:#fff !important;
+      font-family:system-ui,Segoe UI,Roboto,Arial !important;
+    }
+    #hw24-sn-panel label,
+    #hw24-sn-panel b,
+    #hw24-sn-panel div {
+      color:#fff !important;
+    }
+    #hw24-sn-panel textarea,
+    #hw24-sn-panel button {
+      background:#fff !important;
+      color:#111 !important;
+      border:1px solid #444 !important;
+    }
+
+    /* DIALOG OVERLAY */
+    .hw24-sn-dialog {
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.6) !important;
+      z-index:2147483647;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+
+    /* DIALOG BOX */
+    .hw24-sn-box {
+      background:#fff !important;
+      color:#111 !important;
+      width:90%;
+      max-width:1000px;
+      max-height:80vh;
+      overflow:auto;
+      padding:16px;
+      border-radius:10px;
+      font-family:system-ui,Segoe UI,Roboto,Arial !important;
+    }
+    .hw24-sn-box * {
+      color:#111 !important;
+      background:transparent !important;
+    }
+    .hw24-sn-sn {
+      padding:6px 0;
+      border-bottom:1px dashed #ccc;
+    }
+    .hw24-sn-prod {
+      border:1px solid #ccc;
+      border-radius:6px;
+      padding:6px;
+      margin:4px 0;
+    }
+    .hw24-sn-box button {
+      background:#111 !important;
+      color:#fff !important;
+      border:1px solid #333 !important;
+      padding:6px 10px;
+      border-radius:4px;
+      cursor:pointer;
+    }
+  `;
+  document.head.appendChild(css);
+
+  /* ================= Utilities ================= */
 
   const $ = id => document.getElementById(id);
   const S = s => (s || '').toString().trim();
-  const norm = s => S(s).toUpperCase().replace(/\s+/g, '');
+  const norm = s => S(s).toUpperCase().replace(/\s+/g,'');
   const uniq = a => [...new Set(a)];
   const parseList = t => uniq(S(t).split(/[\n,;]+/).map(norm).filter(Boolean));
   const fire = el => el && ['input','change','blur'].forEach(e =>
     el.dispatchEvent(new Event(e,{bubbles:true}))
   );
 
-  /* ========== Line Items ========== */
+  /* ================= Line Items ================= */
 
   function getLineItems(){
     return [...document.querySelectorAll('tr.lineItemRow[id^="row"], tr.inventoryRow')]
       .map(tr=>{
         const rn = tr.dataset.rowNum || tr.id.replace('row','');
-        const descEl = tr.querySelector('textarea[name*="comment"], textarea[name*="description"]');
+        const descEl =
+          tr.querySelector('textarea[name*="comment"], textarea[name*="description"]');
         const qtyEl = tr.querySelector('input[name^="qty"]');
         const desc = S(descEl?.value);
         const m = desc.match(/S\/N\s*:\s*([^\n\r]+)/i);
         const sns = m ? parseList(m[1]) : [];
-        const prodName = S(tr.querySelector(`#productName${rn}`)?.textContent) || `Position ${rn}`;
+        const prodName =
+          S(tr.querySelector(`#productName${rn}`)?.textContent) || `Position ${rn}`;
         return { rn, tr, descEl, qtyEl, desc, sns, prodName };
       });
   }
@@ -54,11 +127,19 @@
     return idx;
   };
 
-  /* ========== Panel ========== */
+  /* ================= Panel ================= */
 
   const panel = document.createElement('div');
   panel.id = 'hw24-sn-panel';
-  panel.style.cssText = 'position:fixed;bottom:16px;left:16px;width:340px;padding:12px;background:#111;color:#fff;z-index:2147483646;border-radius:10px';
+  panel.style.cssText = `
+    position:fixed;
+    bottom:16px;
+    left:16px;
+    width:340px;
+    padding:12px;
+    border-radius:10px;
+    z-index:2147483646;
+  `;
   panel.innerHTML = `
     <b>SN-Abgleich</b>
     <label>Behalten</label>
@@ -76,7 +157,7 @@
   `;
   document.body.appendChild(panel);
 
-  /* ========== Snapshot / Undo ========== */
+  /* ================= Snapshot / Undo ================= */
 
   let SNAPSHOT = null;
   const snapshot = items => items.map(it=>({
@@ -87,7 +168,7 @@
 
   const restore = snap => snap.forEach(s=>{
     const tr = document.getElementById('row'+s.rn) ||
-               document.querySelector(`tr[data-row-num="${s.rn}"]`);
+               document.querySelector(\`tr[data-row-num="\${s.rn}"]\`);
     if(!tr) return;
     const d = tr.querySelector('textarea[name*="comment"], textarea[name*="description"]');
     const q = tr.querySelector('input[name^="qty"]');
@@ -95,7 +176,7 @@
     if(q){ q.value=s.qty; fire(q); }
   });
 
-  /* ========== Preview ========== */
+  /* ================= Preview ================= */
 
   $('sn-preview').onclick = ()=>{
     const items = getLineItems();
@@ -108,7 +189,7 @@
     const msg = [];
 
     const conflicts = keep.filter(sn=>rem.includes(sn));
-    if(conflicts.length) msg.push(`❌ Konflikt: ${conflicts.join(', ')}`);
+    if(conflicts.length) msg.push(`❌ Konflikt Behalten/Entfernen: ${conflicts.join(', ')}`);
 
     const keepMissing = keep.filter(sn=>!idx.has(sn));
     if(keepMissing.length) msg.push(`⚠ Behalten fehlt: ${keepMissing.join(', ')}`);
@@ -122,7 +203,73 @@
     $('sn-msg').textContent = msg.length ? msg.join(' | ') : '✅ Preview OK';
   };
 
-  /* ========== Apply ========== */
+  /* ================= Add Dialog (STEP 1) ================= */
+
+  function openAddDialog(addList, items, onDone){
+    let remaining = [...addList];
+
+    const dlg = document.createElement('div');
+    dlg.className = 'hw24-sn-dialog';
+
+    const box = document.createElement('div');
+    box.className = 'hw24-sn-box';
+
+    function render(){
+      box.innerHTML = '<h3>Seriennummern zuordnen</h3>';
+
+      if(!remaining.length){
+        const close = document.createElement('button');
+        close.textContent = 'Schließen';
+        close.onclick = ()=>{ dlg.remove(); onDone(); };
+        box.appendChild(close);
+        return;
+      }
+
+      const snWrap = document.createElement('div');
+      remaining.forEach(sn=>{
+        const d = document.createElement('div');
+        d.className = 'hw24-sn-sn';
+        d.innerHTML = `<label><input type="checkbox" value="${sn}"> ${sn}</label>`;
+        snWrap.appendChild(d);
+      });
+
+      const prodWrap = document.createElement('div');
+      items.forEach(it=>{
+        const d = document.createElement('div');
+        d.className = 'hw24-sn-prod';
+        d.innerHTML = `
+          <label>
+            <input type="radio" name="hw24-sn-target" value="${it.rn}">
+            ${it.prodName}
+          </label>`;
+        prodWrap.appendChild(d);
+      });
+
+      const assign = document.createElement('button');
+      assign.textContent = 'Zuordnen';
+      assign.onclick = ()=>{
+        const sns = [...snWrap.querySelectorAll('input[type=checkbox]:checked')]
+          .map(i=>i.value);
+        const sel = prodWrap.querySelector('input[type=radio]:checked');
+        if(!sns.length || !sel) return alert('Bitte Seriennummer(n) und Position wählen');
+
+        const it = items.find(x=>x.rn===sel.value);
+        sns.forEach(sn=>{
+          if(!it.sns.includes(sn)) it.sns.push(sn);
+          remaining = remaining.filter(x=>x!==sn);
+        });
+        render();
+      };
+
+      box.append(snWrap, prodWrap, assign);
+    }
+
+    render();
+    dlg.appendChild(box);
+    document.body.appendChild(dlg);
+  }
+
+  /* ================= Apply ================= */
 
   $('sn-apply').onclick = ()=>{
     const items = getLineItems();
@@ -142,7 +289,7 @@
       items.forEach(it=>{
         const snLine = it.sns.length ? `S/N: ${it.sns.join(', ')}` : '';
         const rest = it.desc.replace(/S\/N\s*:[^\n\r]+/i,'').trim();
-        it.descEl.value = [snLine,rest].filter(Boolean).join('\n');
+        it.descEl.value = [snLine, rest].filter(Boolean).join('\n');
         fire(it.descEl);
         if(it.qtyEl){ it.qtyEl.value = it.sns.length; fire(it.qtyEl); }
       });
@@ -150,14 +297,13 @@
     };
 
     if(add.length){
-      alert('Hinzufügen-Dialog ist im nächsten Schritt – aktuell bewusst deaktiviert für Stabilität.');
-      writeBack();
+      openAddDialog(add, items, writeBack);
     } else {
       writeBack();
     }
   };
 
-  /* ========== Undo ========== */
+  /* ================= Undo ================= */
 
   $('sn-undo').onclick = ()=>{
     if(SNAPSHOT) restore(SNAPSHOT);
