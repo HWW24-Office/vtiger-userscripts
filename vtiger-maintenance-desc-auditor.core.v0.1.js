@@ -1,5 +1,5 @@
 /*
- * VTiger Maintenance Description Auditor – Core v0.1
+ * VTiger Maintenance Description Auditor – Core v0.1.1
  * Loaded via Tampermonkey @require
  * Analysis-only (no auto-write)
  */
@@ -7,7 +7,7 @@
 (() => {
   "use strict";
 
-  console.log("[HW24] Maintenance Desc Auditor core v0.1 loaded");
+  console.log("[HW24] Maintenance Desc Auditor core v0.1.1 loaded");
 
   /***********************
    * CONFIG
@@ -132,8 +132,14 @@
 
   function injectRowUI(container, parsed, moduleName) {
     const badge = document.createElement("div");
-    badge.style.marginTop = "4px";
-    badge.style.fontSize = "11px";
+    badge.style.marginTop = "6px";
+    badge.style.fontSize = "12px";
+    badge.style.fontWeight = "bold";
+    badge.style.padding = "2px 6px";
+    badge.style.border = "1px solid #ccc";
+    badge.style.background = "#f8f9fa";
+    badge.style.display = "inline-block";
+
     badge.textContent = buildBadge(parsed, moduleName);
     container.appendChild(badge);
   }
@@ -159,7 +165,7 @@
 
       if (!descEl || !qtyEl) return;
 
-      // einfache Wartungs-Erkennung (v0.1)
+      // v0.1 simple Wartung detection
       if (!/wartung/i.test(row.innerText)) return;
 
       const parsed = parseDescription(
@@ -168,7 +174,10 @@
         parseInt(qtyEl.value, 10) || 0
       );
 
-      injectRowUI(descEl.parentElement, parsed, moduleName);
+      const descCell = descEl.closest("td");
+      if (descCell) {
+        injectRowUI(descCell, parsed, moduleName);
+      }
     });
   }
 
