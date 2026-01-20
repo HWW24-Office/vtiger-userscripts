@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.0.3
-// @description  Show product number (PROxxxxx) instead of product name in line item meta overlay
+// @version      1.1.0
+// @description  Show product number (PROxxxxx) and audit maintenance descriptions in VTiger line items
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -27,8 +27,11 @@
 
   if (!isEdit && !isDetail) return;
 
+  const currentModule =
+    location.href.match(/module=(Quotes|SalesOrder|Invoice)/)?.[1] || '';
+
   /* ===============================
-     CONFIG: Vendor Colors
+     CONFIG
      =============================== */
 
   const VENDOR_COLORS = {
@@ -53,7 +56,7 @@
      UTILITIES
      =============================== */
 
-  const mem = new Map(); // in-memory cache per page load only
+  const mem = new Map();
   const S = s => (s || '').toString().trim();
 
   const debounce = (fn, ms) => {
@@ -65,7 +68,7 @@
   };
 
   /* ===============================
-     META FETCH (ALWAYS LIVE)
+     META FETCH
      =============================== */
 
   async function fetchMeta(url) {
@@ -85,7 +88,6 @@
         return S(v ? v.textContent : '');
       };
 
-      /* ✅ Product Number (PROxxxxx) */
       const productNo =
         S(dp.querySelector('.product_no.value')?.textContent) || '';
 
@@ -105,6 +107,46 @@
   }
 
   /* ===============================
+     AUDITOR (MAINTENANCE)
+     =============================== */
+
+  function extractSerials(desc) {
+    const out = [];
+    const re = /S\/N:\s*([^\n]+)/gi;
+    let m;
+    while ((m = re.exec(desc))) {
+      m[1]
+        .split(/[,;\/]/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .forEach(sn => out.push(sn));
+    }
+    return [...new Set(out)];
+  }
+
+  function auditMaintenance(desc, qty, productName) {
+    if (!desc) return "🔴 Wartung: Keine Beschreibung";
+
+    const serials = extractSerials(desc);
+    const hasStart = /Service\s+Start:/i.test(desc);
+    const hasEnd = /Service\s+(Ende|End):/i.test(desc);
+    const isFasAff = /\b(FAS|AFF|ASA)\d+/i.test(productName || '');
+
+    if (currentModule === "Quotes" && (!hasStart || !hasEnd)) {
+      return "🟡 Wartung: Quote (TBA ok)";
+    }
+
+    if (!serials.length) return "🟡 Wartung: Keine S/N";
+    if (!hasStart || !hasEnd) return "🔴 Wartung: Fehlende Service-Daten";
+
+    if (!(isFasAff && qty === 1) && serials.length !== qty) {
+      return `🟡 Wartung: Quantity (${qty}) ≠ S/N (${serials.length})`;
+    }
+
+    return "🟢 Wartung: OK";
+  }
+
+  /* ===============================
      RENDER HELPERS
      =============================== */
 
@@ -115,6 +157,17 @@
       d.className = 'vt-prodinfo';
       d.style.cssText = 'margin-top:6px;font-size:12px;white-space:pre-wrap';
       td.appendChild(d);
+    }
+    return d;
+  }
+
+  function ensureAuditor(info) {
+    let d = info.querySelector('.hw24-auditor');
+    if (!d) {
+      d = document.createElement('div');
+      d.className = 'hw24-auditor';
+      d.style.cssText = 'margin-top:4px;font-size:11px;font-weight:bold';
+      info.appendChild(d);
     }
     return d;
   }
@@ -178,101 +231,35 @@
 
       const url = `index.php?module=Products&view=Detail&record=${hid.value}`;
       const meta = await fetchMeta(url);
-
       if (meta.vendor) vendorsSeen.add(meta.vendor);
 
       const info = ensureInfo(td);
       renderInfo(info, meta);
+
+      const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
+      const qty = parseInt(tr.querySelector('input[name*="quantity"]')?.value, 10) || 0;
+
+      const auditor = ensureAuditor(info);
+      auditor.textContent = auditMaintenance(desc, qty, meta.pn);
     }
 
     const warn = document.getElementById('hw24-meta-warning');
     if (warn) {
-      if (vendorsSeen.size > 1) {
-        warn.textContent = `⚠️ Gemischte Vendors (${vendorsSeen.size})`;
-        warn.style.color = "#facc15";
-      } else {
-        warn.textContent = "";
-      }
+      warn.textContent =
+        vendorsSeen.size > 1
+          ? `⚠️ Gemischte Vendors (${vendorsSeen.size})`
+          : '';
+      warn.style.color = "#facc15";
     }
-  }
-
-  /* ===============================
-     CORE: DETAIL MODE
-     =============================== */
-
-  async function processDetail() {
-    const tbl = document.querySelector('.lineItemsTable');
-    if (!tbl) return;
-
-    const rows = [...tbl.querySelectorAll('tbody tr')].slice(1);
-    for (const tr of rows) {
-      const td = tr.querySelector('td');
-      const a = td?.querySelector('a[href*="module=Products"]');
-      if (!a) continue;
-
-      const meta = await fetchMeta(a.href);
-      const info = ensureInfo(td);
-      renderInfo(info, meta);
-    }
-  }
-
-  /* ===============================
-     UI PANEL (Edit Mode)
-     =============================== */
-
-  let autoRunEnabled = true;
-
-  function addControlPanel() {
-    if (document.getElementById('hw24-meta-panel')) return;
-
-    const p = document.createElement('div');
-    p.id = 'hw24-meta-panel';
-    p.style.cssText = `
-      position:fixed;
-      bottom:16px;
-      right:16px;
-      z-index:2147483647;
-      background:#111;
-      color:#fff;
-      padding:10px;
-      border-radius:10px;
-      font-size:12px;
-      box-shadow:0 6px 18px rgba(0,0,0,.35)
-    `;
-
-    p.innerHTML = `
-      <div id="hw24-meta-status">🟢 Auto-Run aktiv</div>
-      <div id="hw24-meta-warning" style="margin-top:4px;font-size:11px;"></div>
-      <button id="hw24-meta-toggle">⏸ Pause Auto-Run</button>
-      <button id="hw24-meta-refresh">♻ Refresh</button>
-    `;
-
-    p.querySelectorAll('button').forEach(b => {
-      b.style.cssText = 'margin-top:6px;width:100%;cursor:pointer';
-    });
-
-    p.querySelector('#hw24-meta-toggle').onclick = () => {
-      autoRunEnabled = !autoRunEnabled;
-      p.querySelector('#hw24-meta-toggle').textContent =
-        autoRunEnabled ? '⏸ Pause Auto-Run' : '▶ Resume Auto-Run';
-      p.querySelector('#hw24-meta-status').textContent =
-        autoRunEnabled ? '🟢 Auto-Run aktiv' : '⏸ Auto-Run pausiert';
-    };
-
-    p.querySelector('#hw24-meta-refresh').onclick = async () => {
-      await processEdit();
-      p.querySelector('#hw24-meta-status').textContent = '🟢 Meta aktualisiert';
-    };
-
-    document.body.appendChild(p);
   }
 
   /* ===============================
      BOOTSTRAP
      =============================== */
 
+  let autoRunEnabled = true;
+
   if (isEdit) {
-    addControlPanel();
     await processEdit();
 
     const rerun = debounce(() => {
@@ -285,25 +272,6 @@
       const obs = new MutationObserver(rerun);
       obs.observe(tbl, { childList: true, subtree: true });
     }
-  }
-
-  if (isDetail) {
-    const btn = document.createElement('button');
-    btn.textContent = 'HW24 Meta';
-    btn.style.cssText = `
-      position:fixed;
-      bottom:16px;
-      left:16px;
-      z-index:2147483647;
-      background:#1f6feb;
-      color:#fff;
-      border:none;
-      padding:10px 14px;
-      border-radius:999px;
-      cursor:pointer
-    `;
-    btn.onclick = () => processDetail();
-    document.body.appendChild(btn);
   }
 
 })();
