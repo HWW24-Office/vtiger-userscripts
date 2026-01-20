@@ -3,7 +3,7 @@
 // @namespace    hw24.vtiger.maintenance.desc.auditor
 // @version      0.1.0
 // @description  Analyze & preview maintenance descriptions (Wartung) in VTiger line items. No auto-write.
-// @match        https://vtiger.*/*
+// @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
