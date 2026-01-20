@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         VTiger Product Number Tools
 // @namespace    hw24.vtiger.product.numbertools
-// @version      1.0.2
+// @version      1.0.3
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-product-number-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-product-number-tools.user.js
-// @description  Bulk multiply/divide Purchase Cost, Unit Price and Duration in months with undo support
+// @description  Bulk multiply/divide Purchase Cost, Unit Price and Duration in months using human-readable vtiger field labels (with undo support)
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -13,6 +13,7 @@
 (function () {
   'use strict';
 
+  /* ===== Guards ===== */
   if (
     !location.href.includes('module=Products') ||
     !location.href.includes('view=Edit')
@@ -21,28 +22,108 @@
   const ID = 'vtNumToolsPanel';
   if (document.getElementById(ID)) return;
 
+  /* ===== Target fields ===== */
   const TARGET_SELECTORS = [
     '#Products-editview-fieldname-unit_price',
     'input[name="purchase_cost"]',
-    'input[name="cf_1203"]'
+    'input[name="cf_1203"]' // Duration in months
   ];
 
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const fire = e => e && ["input","change","blur"].forEach(t =>
+  const fire = e => e && ['input', 'change', 'blur'].forEach(t =>
     e.dispatchEvent(new Event(t, { bubbles: true }))
   );
 
+  /* ===== Resolve vtiger field label ===== */
+  const getFieldLabel = (el) => {
+    // 1) Explicit <label for="...">
+    if (el.id) {
+      const lbl = document.querySelector(`label[for="${el.id}"]`);
+      if (lbl && lbl.textContent.trim()) {
+        return lbl.textContent.trim().replace(/[:*]/g, '');
+      }
+    }
+
+    // 2) Classic vtiger EditView table layout
+    const td = el.closest('td');
+    if (td) {
+      const labelTd = td.previousElementSibling;
+      if (labelTd && labelTd.classList.contains('fieldLabel')) {
+        const txt = labelTd.textContent.trim().replace(/[:*]/g, '');
+        if (txt) return txt;
+      }
+    }
+
+    // 3) data-label attribute (newer layouts)
+    const dataLabel = el.getAttribute('data-label');
+    if (dataLabel) return dataLabel.trim();
+
+    // 4) Fallback
+    return el.name || el.id || 'Unbekanntes Feld';
+  };
+
   /* ===== CSS ===== */
   const css = `
-#${ID}{position:fixed;z-index:999999;top:12px;right:12px;max-width:380px;background:#111;border:1px solid #444;color:#fff;font:13px/1.35 system-ui;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
-#${ID} header{display:flex;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #333}
-#${ID} button{cursor:pointer;border:1px solid #333;background:#1e1e1e;color:#fff;border-radius:8px;padding:6px 10px}
+#${ID}{
+  position:fixed;
+  z-index:999999;
+  top:12px;
+  right:12px;
+  max-width:380px;
+  background:#111;
+  border:1px solid #444;
+  color:#fff;
+  font:13px/1.35 system-ui;
+  border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.35)
+}
+#${ID} header{
+  display:flex;
+  justify-content:space-between;
+  padding:10px 12px;
+  border-bottom:1px solid #333
+}
+#${ID} button{
+  cursor:pointer;
+  border:1px solid #333;
+  background:#1e1e1e;
+  color:#fff;
+  border-radius:8px;
+  padding:6px 10px
+}
 #${ID} .body{padding:10px}
-#${ID} .row{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:4px 6px;border:1px dashed #333;border-radius:8px;margin-bottom:8px}
-#${ID} input[type="text"]{background:#0f0f0f;border:1px solid #2a2a2a;color:#eee;border-radius:6px;padding:4px 6px;width:100%}
-#${ID} .foot{padding:10px;border-top:1px solid #333;display:flex;gap:6px;flex-wrap:wrap}
-#${ID} .pill{font-size:11px;padding:3px 6px;border-radius:999px;border:1px solid #2a2a2a;background:#161616}
-`;
+#${ID} .row{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  gap:8px;
+  align-items:center;
+  padding:4px 6px;
+  border:1px dashed #333;
+  border-radius:8px;
+  margin-bottom:8px
+}
+#${ID} input[type="text"]{
+  background:#0f0f0f;
+  border:1px solid #2a2a2a;
+  color:#eee;
+  border-radius:6px;
+  padding:4px 6px;
+  width:100%
+}
+#${ID} .foot{
+  padding:10px;
+  border-top:1px solid #333;
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap
+}
+#${ID} .pill{
+  font-size:11px;
+  padding:3px 6px;
+  border-radius:999px;
+  border:1px solid #2a2a2a;
+  background:#161616
+}`;
   const style = document.createElement('style');
   style.textContent = css;
   document.head.appendChild(style);
@@ -67,8 +148,9 @@
   document.body.appendChild(panel);
   document.getElementById('vtNTClose').onclick = () => panel.remove();
 
-  /* ===== Felder sammeln ===== */
-  const targets = TARGET_SELECTORS.flatMap(sel => $$(sel))
+  /* ===== Collect fields ===== */
+  const targets = TARGET_SELECTORS
+    .flatMap(sel => $$(sel))
     .filter(el => el && !el.readOnly && !el.disabled);
 
   const items = [];
@@ -76,6 +158,7 @@
 
   targets.forEach(el => {
     const orig = el.value;
+    const fieldLabel = getFieldLabel(el);
 
     const row = document.createElement('div');
     row.className = 'row';
@@ -85,7 +168,10 @@
     cb.checked = true;
 
     const label = document.createElement('div');
-    label.innerHTML = `<b>${el.name || el.id}</b><div style="font-size:11px;color:#bbb">${orig}</div>`;
+    label.innerHTML = `
+      <b>${fieldLabel}</b>
+      <div style="font-size:11px;color:#bbb">${orig}</div>
+    `;
 
     const peek = document.createElement('input');
     peek.type = 'text';
@@ -94,12 +180,7 @@
     row.append(cb, label, peek);
     listEl.appendChild(row);
 
-    items.push({
-      el,
-      cb,
-      peek,
-      orig
-    });
+    items.push({ el, cb, peek, orig });
   });
 
   const info = document.getElementById('vtNTInfo');
