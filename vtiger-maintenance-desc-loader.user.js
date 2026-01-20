@@ -7,6 +7,6 @@
 // @grant        none
 // @run-at       document-end
 //
-// @require      https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/maintenance-desc/core.v0.1.js
+// @require      https://raw.github.com/HWW24-Office/vtiger-userscripts/raw/refs/heads/main/vtiger-maintenance-desc-auditor.user.js
 //
 // ==/UserScript==
