@@ -1,13 +1,11 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.2.4
-// @description  Show product number (PROxxxxx), audit maintenance descriptions and manually standardize description language per line item
+// @version      1.2.5
+// @description  Show product number (PROxxxxx), audit maintenance descriptions and enforce description structure
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
-// @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-meta-overlay.user.js
-// @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-meta-overlay.user.js
 // ==/UserScript==
 
 (async function () {
@@ -86,7 +84,7 @@
   }
 
   /* ===============================
-     META FETCH
+     META FETCH (unchanged)
      =============================== */
 
   async function fetchMeta(url) {
@@ -124,7 +122,47 @@
   }
 
   /* ===============================
-     AUDITOR
+     DESCRIPTION ORDER + LANGUAGE AUDIT
+     =============================== */
+
+  const LABELS = {
+    de: ["S/N:", "inkl.:", "Standort:", "Service Start:", "Service Ende:"],
+    en: ["S/N:", "incl.:", "Location:", "Service Start:", "Service End:"]
+  };
+
+  function analyzeDescription(desc) {
+    const lines = desc.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+    const found = [];
+    for (const l of lines) {
+      const key = Object.values(LABELS).flat().find(k => l.startsWith(k));
+      if (key) found.push(key);
+    }
+
+    const isDE = found.some(f => LABELS.de.includes(f));
+    const isEN = found.some(f => LABELS.en.includes(f));
+    if (isDE && isEN) return { ok: false, reason: "Sprachmix" };
+
+    const base = isEN ? LABELS.en : LABELS.de;
+    let lastIndex = -1;
+
+    for (const f of found) {
+      const idx = base.indexOf(f);
+      if (idx === -1 || idx < lastIndex) {
+        return { ok: false, reason: "Reihenfolge" };
+      }
+      lastIndex = idx;
+    }
+
+    if (!found.includes("Service Start:") || !(found.includes("Service Ende:") || found.includes("Service End:"))) {
+      return { ok: false, reason: "Service-Daten fehlen" };
+    }
+
+    return { ok: true };
+  }
+
+  /* ===============================
+     AUDITOR (extended)
      =============================== */
 
   function extractSerials(desc) {
@@ -141,18 +179,12 @@
     if (!desc) return "🔴 Wartung: Keine Beschreibung";
 
     const serials = extractSerials(desc);
-    const hasStart = /Service\s+Start:/i.test(desc);
-    const hasEnd = /Service\s+(Ende|End):/i.test(desc);
-    const isFasAff = /\b(FAS|AFF|ASA)\d+/i.test(productName || '');
-
-    if (currentModule === "Quotes" && (!hasStart || !hasEnd)) {
-      return "🟡 Wartung: Quote (TBA ok)";
-    }
+    const structure = analyzeDescription(desc);
+    if (!structure.ok) return `🟡 Wartung: ${structure.reason}`;
 
     if (!serials.length) return "🟡 Wartung: Keine S/N";
-    if (!hasStart || !hasEnd) return "🔴 Wartung: Fehlende Service-Daten";
 
-    if (!(isFasAff && qty === 1) && serials.length !== qty) {
+    if (!(serials.length === qty)) {
       return `🟡 Wartung: Quantity (${qty}) ≠ S/N (${serials.length})`;
     }
 
@@ -160,51 +192,7 @@
   }
 
   /* ===============================
-     RENDER HELPERS
-     =============================== */
-
-  function ensureInfo(td) {
-    let d = td.querySelector('.vt-prodinfo');
-    if (!d) {
-      d = document.createElement('div');
-      d.className = 'vt-prodinfo';
-      d.style.cssText = 'margin-top:6px;font-size:12px;white-space:pre-wrap';
-      td.appendChild(d);
-    }
-    return d;
-  }
-
-  function ensureAuditor(info) {
-    let d = info.querySelector('.hw24-auditor');
-    if (!d) {
-      d = document.createElement('div');
-      d.className = 'hw24-auditor';
-      d.style.cssText = 'margin-top:4px;font-size:11px;font-weight:bold';
-      info.appendChild(d);
-    }
-    return d;
-  }
-
-  function renderInfo(info, meta) {
-    info.innerHTML = `
-      <span style="
-        display:inline-block;
-        padding:2px 6px;
-        border-radius:999px;
-        background:${colorForVendor(meta.vendor)};
-        color:#fff;
-        font-size:11px;
-        margin-right:6px
-      ">${meta.vendor || '—'}</span>
-      PN: ${meta.pn || '—'}
-      • SLA: ${meta.sla || '—'}
-      • Duration: ${meta.duration || '—'}
-      • Country: ${meta.country || '—'}
-    `;
-  }
-
-  /* ===============================
-     DESCRIPTION STANDARDIZER (BIDIRECTIONAL)
+     DESCRIPTION STANDARDIZER
      =============================== */
 
   const DESCRIPTION_LABELS = {
@@ -221,24 +209,24 @@
   };
 
   function normalizeDescriptionLanguage(text, lang) {
-    if (!text || !DESCRIPTION_LABELS[lang]) return text;
-
     let t = text;
 
-    // EN -> DE (reset to base)
+    // reset to DE
     t = t
-      .replaceAll(DESCRIPTION_LABELS.en.location, DESCRIPTION_LABELS.de.location)
-      .replaceAll(DESCRIPTION_LABELS.en.serviceEnd, DESCRIPTION_LABELS.de.serviceEnd)
-      .replaceAll(DESCRIPTION_LABELS.en.included, DESCRIPTION_LABELS.de.included);
+      .replaceAll("Location:", "Standort:")
+      .replaceAll("incl.:", "inkl.:")
+      .replaceAll("Service End:", "Service Ende:");
 
-    // DE -> target
-    return t
-      .replaceAll(DESCRIPTION_LABELS.de.location, DESCRIPTION_LABELS[lang].location)
-      .replaceAll(DESCRIPTION_LABELS.de.serviceEnd, DESCRIPTION_LABELS[lang].serviceEnd)
-      .replaceAll(DESCRIPTION_LABELS.de.included, DESCRIPTION_LABELS[lang].included);
+    // apply target
+    return lang === "en"
+      ? t
+          .replaceAll("Standort:", "Location:")
+          .replaceAll("inkl.:", "incl.:")
+          .replaceAll("Service Ende:", "Service End:")
+      : t;
   }
 
-  function openStandardizer(textarea) {
+  function openStandardizer(tr, textarea, meta) {
     const original = textarea.value;
     let lang = 'en';
 
@@ -278,7 +266,10 @@
       <button type="button" id="cancel">Cancel</button>
     `;
     actions.onclick = e => {
-      if (e.target.id === 'apply') textarea.value = prevTA.value;
+      if (e.target.id === 'apply') {
+        textarea.value = prevTA.value;
+        refreshBadgeForRow(tr, meta);
+      }
       overlay.remove();
     };
 
@@ -287,7 +278,61 @@
     document.body.appendChild(overlay);
   }
 
-  function injectDescButton(tr) {
+  /* ===============================
+     RENDER HELPERS
+     =============================== */
+
+  function ensureInfo(td) {
+    let d = td.querySelector('.vt-prodinfo');
+    if (!d) {
+      d = document.createElement('div');
+      d.className = 'vt-prodinfo';
+      d.style.cssText = 'margin-top:6px;font-size:12px;white-space:pre-wrap';
+      td.appendChild(d);
+    }
+    return d;
+  }
+
+  function ensureAuditor(info) {
+    let d = info.querySelector('.hw24-auditor');
+    if (!d) {
+      d = document.createElement('div');
+      d.className = 'hw24-auditor';
+      d.style.cssText = 'margin-top:4px;font-size:11px;font-weight:bold';
+      info.appendChild(d);
+    }
+    return d;
+  }
+
+  function refreshBadgeForRow(tr, meta) {
+    const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
+    const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
+    const qty = getQuantity(tr, rn);
+    const info = tr.querySelector('.vt-prodinfo');
+    if (!info) return;
+    const auditor = ensureAuditor(info);
+    auditor.textContent = auditMaintenance(desc, qty, meta.pn);
+  }
+
+  function renderInfo(info, meta) {
+    info.innerHTML = `
+      <span style="
+        display:inline-block;
+        padding:2px 6px;
+        border-radius:999px;
+        background:${colorForVendor(meta.vendor)};
+        color:#fff;
+        font-size:11px;
+        margin-right:6px
+      ">${meta.vendor || '—'}</span>
+      PN: ${meta.pn || '—'}
+      • SLA: ${meta.sla || '—'}
+      • Duration: ${meta.duration || '—'}
+      • Country: ${meta.country || '—'}
+    `;
+  }
+
+  function injectButtons(tr, meta) {
     if (tr.querySelector('.hw24-desc-btn')) return;
     const ta = tr.querySelector('textarea[name*="comment"]');
     if (!ta) return;
@@ -301,36 +346,14 @@
     btn.onclick = e => {
       e.preventDefault();
       e.stopPropagation();
-      openStandardizer(ta);
+      openStandardizer(tr, ta, meta);
     };
 
     ta.after(btn);
   }
 
-  function injectRefreshButton(tr, info, meta, rn) {
-    if (info.querySelector('.hw24-refresh')) return;
-
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'hw24-refresh';
-    btn.textContent = '↻ Badge neu prüfen';
-    btn.style.cssText = 'margin-left:6px;font-size:11px';
-
-    btn.onclick = e => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
-      const qty = getQuantity(tr, rn);
-      const auditor = ensureAuditor(info);
-      auditor.textContent = auditMaintenance(desc, qty, meta.pn);
-    };
-
-    info.appendChild(btn);
-  }
-
   /* ===============================
-     CORE: EDIT MODE
+     CORE
      =============================== */
 
   async function processEdit() {
@@ -341,14 +364,6 @@
 
     for (const tr of rows) {
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
-      const sig = [
-        tr.querySelector('.purchaseCost')?.value,
-        tr.querySelector('textarea')?.value,
-        tr.querySelector('input[name^="hdnProductId"]')?.value
-      ].join('|');
-
-      if (tr.dataset.vtSig === sig) continue;
-      tr.dataset.vtSig = sig;
 
       const nameEl =
         tr.querySelector('#productName' + rn) ||
@@ -367,13 +382,8 @@
       const info = ensureInfo(td);
       renderInfo(info, meta);
 
-      const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
-      const qty = getQuantity(tr, rn);
-      const auditor = ensureAuditor(info);
-      auditor.textContent = auditMaintenance(desc, qty, meta.pn);
-
-      injectDescButton(tr);
-      injectRefreshButton(tr, info, meta, rn);
+      refreshBadgeForRow(tr, meta);
+      injectButtons(tr, meta);
     }
   }
 
