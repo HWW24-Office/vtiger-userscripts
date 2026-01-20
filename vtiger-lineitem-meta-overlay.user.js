@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.1.0
+// @version      1.1.1
 // @description  Show product number (PROxxxxx) and audit maintenance descriptions in VTiger line items
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -14,43 +14,29 @@
   'use strict';
 
   /* ===============================
-     MODE DETECTION
+     MODULE DETECTION
      =============================== */
+
+  const SUPPORTED_MODULES = [
+    'Quotes',
+    'SalesOrder',
+    'Invoice',
+    'PurchaseOrder',
+    'Products'
+  ];
 
   const isEdit =
     location.href.includes('view=Edit') &&
-    /module=(Quotes|SalesOrder|Invoice)/.test(location.href);
+    new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`).test(location.href);
 
   const isDetail =
     location.href.includes('view=Detail') &&
-    /module=(Quotes|SalesOrder|Invoice)/.test(location.href);
+    new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`).test(location.href);
 
   if (!isEdit && !isDetail) return;
 
   const currentModule =
-    location.href.match(/module=(Quotes|SalesOrder|Invoice)/)?.[1] || '';
-
-  /* ===============================
-     CONFIG
-     =============================== */
-
-  const VENDOR_COLORS = {
-    "Technogroup": "#2563eb",
-    "Park Place": "#16a34a",
-    "ITRIS": "#9333ea",
-    "IDS": "#ea580c",
-    "DIS": "#dc2626",
-    "Axians": "#0891b2"
-  };
-
-  function colorForVendor(vendor) {
-    if (!vendor) return "#6b7280";
-    const v = vendor.toLowerCase();
-    for (const key of Object.keys(VENDOR_COLORS)) {
-      if (v.includes(key.toLowerCase())) return VENDOR_COLORS[key];
-    }
-    return "#6b7280";
-  }
+    location.href.match(new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`))?.[1] || '';
 
   /* ===============================
      UTILITIES
@@ -67,47 +53,19 @@
     };
   };
 
-  /* ===============================
-     META FETCH
-     =============================== */
+  function getQuantity(tr, rn) {
+    const q =
+      tr.querySelector(`#qty${rn}`) ||
+      tr.querySelector(`#quantity${rn}`) ||
+      tr.querySelector(`input[name="qty${rn}"]`) ||
+      tr.querySelector(`input[name="quantity${rn}"]`);
 
-  async function fetchMeta(url) {
-    if (!url) return {};
-    if (mem.has(url)) return mem.get(url);
-
-    try {
-      const r = await fetch(url, { credentials: 'same-origin' });
-      const h = await r.text();
-      const dp = new DOMParser().parseFromString(h, 'text/html');
-
-      const getVal = label => {
-        const lab = [...dp.querySelectorAll('[id^="Products_detailView_fieldLabel_"]')]
-          .find(l => S(l.textContent).toLowerCase().includes(label));
-        if (!lab) return '';
-        const v = dp.getElementById(lab.id.replace('fieldLabel', 'fieldValue'));
-        return S(v ? v.textContent : '');
-      };
-
-      const productNo =
-        S(dp.querySelector('.product_no.value')?.textContent) || '';
-
-      const meta = {
-        pn: productNo,
-        vendor: getVal('vendor'),
-        sla: getVal('sla'),
-        duration: getVal('duration'),
-        country: getVal('country')
-      };
-
-      mem.set(url, meta);
-      return meta;
-    } catch {
-      return {};
-    }
+    const v = parseInt(q?.value, 10);
+    return Number.isFinite(v) ? v : 0;
   }
 
   /* ===============================
-     AUDITOR (MAINTENANCE)
+     AUDITOR
      =============================== */
 
   function extractSerials(desc) {
@@ -147,59 +105,7 @@
   }
 
   /* ===============================
-     RENDER HELPERS
-     =============================== */
-
-  function ensureInfo(td) {
-    let d = td.querySelector('.vt-prodinfo');
-    if (!d) {
-      d = document.createElement('div');
-      d.className = 'vt-prodinfo';
-      d.style.cssText = 'margin-top:6px;font-size:12px;white-space:pre-wrap';
-      td.appendChild(d);
-    }
-    return d;
-  }
-
-  function ensureAuditor(info) {
-    let d = info.querySelector('.hw24-auditor');
-    if (!d) {
-      d = document.createElement('div');
-      d.className = 'hw24-auditor';
-      d.style.cssText = 'margin-top:4px;font-size:11px;font-weight:bold';
-      info.appendChild(d);
-    }
-    return d;
-  }
-
-  function sigForRow(tr) {
-    return [
-      tr.querySelector('.purchaseCost')?.value,
-      tr.querySelector('textarea')?.value,
-      tr.querySelector('input[name^="hdnProductId"]')?.value
-    ].join('|');
-  }
-
-  function renderInfo(info, meta) {
-    info.innerHTML = `
-      <span style="
-        display:inline-block;
-        padding:2px 6px;
-        border-radius:999px;
-        background:${colorForVendor(meta.vendor)};
-        color:#fff;
-        font-size:11px;
-        margin-right:6px
-      ">${meta.vendor || '—'}</span>
-      PN: ${meta.pn || '—'}
-      • SLA: ${meta.sla || '—'}
-      • Duration: ${meta.duration || '—'}
-      • Country: ${meta.country || '—'}
-    `;
-  }
-
-  /* ===============================
-     CORE: EDIT MODE
+     CORE: EDIT MODE (gekürzt)
      =============================== */
 
   async function processEdit() {
@@ -207,71 +113,39 @@
     if (!tbl) return;
 
     const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
-    const vendorsSeen = new Set();
 
     for (const tr of rows) {
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
-      const sig = sigForRow(tr);
-      if (tr.dataset.vtSig === sig) continue;
-      tr.dataset.vtSig = sig;
-
-      const nameEl =
-        tr.querySelector('#productName' + rn) ||
-        tr.querySelector('input[id^="productName"]') ||
-        tr.querySelector('a[href*="module=Products"]');
-
-      const td = nameEl ? nameEl.closest('td') : null;
-      if (!td) continue;
-
-      const hid =
-        tr.querySelector(`input[name="hdnProductId${rn}"]`) ||
-        tr.querySelector('input[name^="hdnProductId"]');
-
-      if (!hid || !hid.value) continue;
-
-      const url = `index.php?module=Products&view=Detail&record=${hid.value}`;
-      const meta = await fetchMeta(url);
-      if (meta.vendor) vendorsSeen.add(meta.vendor);
-
-      const info = ensureInfo(td);
-      renderInfo(info, meta);
-
       const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
-      const qty = parseInt(tr.querySelector('input[name*="quantity"]')?.value, 10) || 0;
+      const qty = getQuantity(tr, rn);
 
-      const auditor = ensureAuditor(info);
-      auditor.textContent = auditMaintenance(desc, qty, meta.pn);
-    }
+      const productName =
+        tr.querySelector(`#productName${rn}`)?.value ||
+        tr.querySelector('input[id^="productName"]')?.value || '';
 
-    const warn = document.getElementById('hw24-meta-warning');
-    if (warn) {
-      warn.textContent =
-        vendorsSeen.size > 1
-          ? `⚠️ Gemischte Vendors (${vendorsSeen.size})`
-          : '';
-      warn.style.color = "#facc15";
+      const info =
+        tr.querySelector('.vt-prodinfo') ||
+        tr.querySelector('td')?.querySelector('.vt-prodinfo');
+
+      if (!info) continue;
+
+      let auditor = info.querySelector('.hw24-auditor');
+      if (!auditor) {
+        auditor = document.createElement('div');
+        auditor.className = 'hw24-auditor';
+        auditor.style.cssText = 'margin-top:4px;font-size:11px;font-weight:bold';
+        info.appendChild(auditor);
+      }
+
+      auditor.textContent = auditMaintenance(desc, qty, productName);
     }
   }
 
-  /* ===============================
-     BOOTSTRAP
-     =============================== */
-
-  let autoRunEnabled = true;
-
   if (isEdit) {
     await processEdit();
-
-    const rerun = debounce(() => {
-      if (!autoRunEnabled) return;
-      processEdit();
-    }, 700);
-
+    const rerun = debounce(processEdit, 700);
     const tbl = document.querySelector('#lineItemTab');
-    if (tbl) {
-      const obs = new MutationObserver(rerun);
-      obs.observe(tbl, { childList: true, subtree: true });
-    }
+    if (tbl) new MutationObserver(rerun).observe(tbl, { childList: true, subtree: true });
   }
 
 })();
