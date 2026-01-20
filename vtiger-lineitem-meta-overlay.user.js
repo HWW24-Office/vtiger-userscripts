@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.2.3
+// @version      1.2.4
 // @description  Show product number (PROxxxxx), audit maintenance descriptions and manually standardize description language per line item
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -204,7 +204,7 @@
   }
 
   /* ===============================
-     DESCRIPTION STANDARDIZER (ADDITIVE)
+     DESCRIPTION STANDARDIZER (BIDIRECTIONAL)
      =============================== */
 
   const DESCRIPTION_LABELS = {
@@ -223,7 +223,16 @@
   function normalizeDescriptionLanguage(text, lang) {
     if (!text || !DESCRIPTION_LABELS[lang]) return text;
 
-    return text
+    let t = text;
+
+    // EN -> DE (reset to base)
+    t = t
+      .replaceAll(DESCRIPTION_LABELS.en.location, DESCRIPTION_LABELS.de.location)
+      .replaceAll(DESCRIPTION_LABELS.en.serviceEnd, DESCRIPTION_LABELS.de.serviceEnd)
+      .replaceAll(DESCRIPTION_LABELS.en.included, DESCRIPTION_LABELS.de.included);
+
+    // DE -> target
+    return t
       .replaceAll(DESCRIPTION_LABELS.de.location, DESCRIPTION_LABELS[lang].location)
       .replaceAll(DESCRIPTION_LABELS.de.serviceEnd, DESCRIPTION_LABELS[lang].serviceEnd)
       .replaceAll(DESCRIPTION_LABELS.de.included, DESCRIPTION_LABELS[lang].included);
@@ -298,6 +307,28 @@
     ta.after(btn);
   }
 
+  function injectRefreshButton(tr, info, meta, rn) {
+    if (info.querySelector('.hw24-refresh')) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hw24-refresh';
+    btn.textContent = '↻ Badge neu prüfen';
+    btn.style.cssText = 'margin-left:6px;font-size:11px';
+
+    btn.onclick = e => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
+      const qty = getQuantity(tr, rn);
+      const auditor = ensureAuditor(info);
+      auditor.textContent = auditMaintenance(desc, qty, meta.pn);
+    };
+
+    info.appendChild(btn);
+  }
+
   /* ===============================
      CORE: EDIT MODE
      =============================== */
@@ -342,6 +373,7 @@
       auditor.textContent = auditMaintenance(desc, qty, meta.pn);
 
       injectDescButton(tr);
+      injectRefreshButton(tr, info, meta, rn);
     }
   }
 
