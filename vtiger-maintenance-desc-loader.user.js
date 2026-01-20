@@ -1,4 +1,4 @@
-/ ==UserScript==
+// ==UserScript==
 // @name         VTiger Maintenance Description Auditor (Loader)
 // @namespace    hw24.vtiger.maintenance.desc
 // @version      0.1.0
