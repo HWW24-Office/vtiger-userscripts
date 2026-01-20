@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.2.1
-// @description  Show product number (PROxxxxx), audit maintenance descriptions and manually standardize description language
+// @version      1.2.3
+// @description  Show product number (PROxxxxx), audit maintenance descriptions and manually standardize description language per line item
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -106,8 +106,7 @@
         return S(v ? v.textContent : '');
       };
 
-      const productNo =
-        S(dp.querySelector('.product_no.value')?.textContent) || '';
+      const productNo = S(dp.querySelector('.product_no.value')?.textContent);
 
       const meta = {
         pn: productNo,
@@ -205,7 +204,7 @@
   }
 
   /* ===============================
-     DESCRIPTION STANDARDIZER (MANUAL)
+     DESCRIPTION STANDARDIZER (ADDITIVE)
      =============================== */
 
   const DESCRIPTION_LABELS = {
@@ -230,68 +229,38 @@
       .replaceAll(DESCRIPTION_LABELS.de.included, DESCRIPTION_LABELS[lang].included);
   }
 
-  function injectStandardizeButton() {
-    if (!isEdit) return;
-    if (document.getElementById('hw24-desc-std-btn')) return;
-
-    const tbl = document.querySelector('#lineItemTab');
-    if (!tbl) return;
-
-    const btn = document.createElement('button');
-    btn.id = 'hw24-desc-std-btn';
-    btn.type = 'button';
-    btn.textContent = 'Description standardisieren';
-    btn.style.cssText = 'margin:6px 0;padding:4px 8px;font-size:12px;cursor:pointer';
-
-    btn.addEventListener('click', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      openStandardizer();
-    });
-
-    tbl.before(btn);
-  }
-
-  function openStandardizer() {
-    const descField = document.querySelector('textarea[name*="comment"]');
-    if (!descField) return;
-
-    const original = descField.value;
+  function openStandardizer(textarea) {
+    const original = textarea.value;
     let lang = 'en';
 
     const overlay = document.createElement('div');
     overlay.style.cssText = `
-      position:fixed;
-      inset:0;
-      background:rgba(0,0,0,.4);
-      z-index:99999;
-      display:flex;
-      align-items:center;
-      justify-content:center;
+      position:fixed; inset:0; background:rgba(0,0,0,.4);
+      z-index:99999; display:flex; align-items:center; justify-content:center;
     `;
 
     const box = document.createElement('div');
     box.style.cssText = 'background:#fff;padding:12px;width:800px;max-width:90%;font-size:12px';
 
-    const preview = document.createElement('textarea');
-    preview.readOnly = true;
-    preview.style.cssText = 'width:100%;height:140px';
+    const origTA = document.createElement('textarea');
+    origTA.readOnly = true;
+    origTA.style.cssText = 'width:100%;height:140px';
+    origTA.value = original;
 
-    const update = () => preview.value = normalizeDescriptionLanguage(original, lang);
+    const prevTA = document.createElement('textarea');
+    prevTA.readOnly = true;
+    prevTA.style.cssText = 'width:100%;height:140px';
+
+    const update = () => prevTA.value = normalizeDescriptionLanguage(original, lang);
     update();
 
-    box.innerHTML = `
-      <b>Original</b>
-      <textarea style="width:100%;height:140px" readonly>${original}</textarea>
-      <b>Vorschau</b>
-      <div style="margin:6px 0">
-        <button type="button" data-lang="de">DE</button>
-        <button type="button" data-lang="en">EN</button>
-      </div>
+    const switcher = document.createElement('div');
+    switcher.innerHTML = `
+      <button type="button" data-lang="de">DE</button>
+      <button type="button" data-lang="en">EN</button>
     `;
-
-    box.querySelectorAll('[data-lang]').forEach(b =>
-      b.addEventListener('click', () => { lang = b.dataset.lang; update(); })
+    switcher.querySelectorAll('button').forEach(b =>
+      b.onclick = () => { lang = b.dataset.lang; update(); }
     );
 
     const actions = document.createElement('div');
@@ -299,15 +268,34 @@
       <button type="button" id="apply">Apply</button>
       <button type="button" id="cancel">Cancel</button>
     `;
-
     actions.onclick = e => {
-      if (e.target.id === 'apply') descField.value = preview.value;
+      if (e.target.id === 'apply') textarea.value = prevTA.value;
       overlay.remove();
     };
 
-    box.append(preview, actions);
+    box.append('Original', origTA, 'Vorschau', switcher, prevTA, actions);
     overlay.appendChild(box);
     document.body.appendChild(overlay);
+  }
+
+  function injectDescButton(tr) {
+    if (tr.querySelector('.hw24-desc-btn')) return;
+    const ta = tr.querySelector('textarea[name*="comment"]');
+    if (!ta) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hw24-desc-btn';
+    btn.textContent = 'Description standardisieren';
+    btn.style.cssText = 'margin-top:4px;font-size:11px';
+
+    btn.onclick = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      openStandardizer(ta);
+    };
+
+    ta.after(btn);
   }
 
   /* ===============================
@@ -345,7 +333,6 @@
       if (!hid?.value) continue;
 
       const meta = await fetchMeta(`index.php?module=Products&view=Detail&record=${hid.value}`);
-
       const info = ensureInfo(td);
       renderInfo(info, meta);
 
@@ -353,6 +340,8 @@
       const qty = getQuantity(tr, rn);
       const auditor = ensureAuditor(info);
       auditor.textContent = auditMaintenance(desc, qty, meta.pn);
+
+      injectDescButton(tr);
     }
   }
 
@@ -362,8 +351,6 @@
 
   if (isEdit) {
     await processEdit();
-    injectStandardizeButton();
-
     const rerun = debounce(processEdit, 700);
     const tbl = document.querySelector('#lineItemTab');
     if (tbl) new MutationObserver(rerun).observe(tbl, { childList: true, subtree: true });
