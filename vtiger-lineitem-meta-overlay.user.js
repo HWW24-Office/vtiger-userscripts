@@ -1,13 +1,11 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.2.7
-// @description  Show product number (PROxxxxx), audit maintenance descriptions, standardize language and validate structure
+// @version      1.2.5
+// @description  Show product number (PROxxxxx), audit maintenance descriptions and enforce description structure
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
-// @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-meta-overlay.user.js
-// @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-meta-overlay.user.js
 // ==/UserScript==
 
 (async function () {
@@ -86,7 +84,7 @@
   }
 
   /* ===============================
-     META FETCH
+     META FETCH (unchanged)
      =============================== */
 
   async function fetchMeta(url) {
@@ -124,54 +122,47 @@
   }
 
   /* ===============================
-     DESCRIPTION STRUCTURE & LANGUAGE AUDIT
+     DESCRIPTION ORDER + LANGUAGE AUDIT
      =============================== */
 
-  const NEUTRAL = ["S/N:", "Service Start:"];
-  const DE_ONLY = ["inkl.:", "Standort:", "Service Ende:"];
-  const EN_ONLY = ["incl.:", "Location:", "Service End:"];
-
-  const ORDER_DE = ["S/N:", "inkl.:", "Standort:", "Service Start:", "Service Ende:"];
-  const ORDER_EN = ["S/N:", "incl.:", "Location:", "Service Start:", "Service End:"];
+  const LABELS = {
+    de: ["S/N:", "inkl.:", "Standort:", "Service Start:", "Service Ende:"],
+    en: ["S/N:", "incl.:", "Location:", "Service Start:", "Service End:"]
+  };
 
   function analyzeDescription(desc) {
     const lines = desc.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
     const found = [];
-    let hasDE = false;
-    let hasEN = false;
-
     for (const l of lines) {
-      for (const k of DE_ONLY) if (l.startsWith(k)) { hasDE = true; found.push(k); }
-      for (const k of EN_ONLY) if (l.startsWith(k)) { hasEN = true; found.push(k); }
-      for (const k of NEUTRAL) if (l.startsWith(k)) found.push(k);
+      const key = Object.values(LABELS).flat().find(k => l.startsWith(k));
+      if (key) found.push(key);
     }
 
-    if (hasDE && hasEN) return { ok: false, reason: "Sprachmix" };
+    const isDE = found.some(f => LABELS.de.includes(f));
+    const isEN = found.some(f => LABELS.en.includes(f));
+    if (isDE && isEN) return { ok: false, reason: "Sprachmix" };
 
-    const order = hasEN ? ORDER_EN : ORDER_DE;
+    const base = isEN ? LABELS.en : LABELS.de;
+    let lastIndex = -1;
 
-    let lastIdx = -1;
     for (const f of found) {
-      const idx = order.indexOf(f);
-      if (idx === -1 || idx < lastIdx) {
+      const idx = base.indexOf(f);
+      if (idx === -1 || idx < lastIndex) {
         return { ok: false, reason: "Reihenfolge" };
       }
-      lastIdx = idx;
+      lastIndex = idx;
     }
 
-    const hasStart = lines.some(l => l.startsWith("Service Start:"));
-    const hasEnd = lines.some(l =>
-      l.startsWith("Service Ende:") || l.startsWith("Service End:")
-    );
-
-    if (!hasStart || !hasEnd) return { ok: false, reason: "Service-Daten fehlen" };
+    if (!found.includes("Service Start:") || !(found.includes("Service Ende:") || found.includes("Service End:"))) {
+      return { ok: false, reason: "Service-Daten fehlen" };
+    }
 
     return { ok: true };
   }
 
   /* ===============================
-     AUDITOR
+     AUDITOR (extended)
      =============================== */
 
   function extractSerials(desc) {
@@ -184,15 +175,16 @@
     return [...new Set(out)];
   }
 
-  function auditMaintenance(desc, qty) {
+  function auditMaintenance(desc, qty, productName) {
     if (!desc) return "🔴 Wartung: Keine Beschreibung";
 
+    const serials = extractSerials(desc);
     const structure = analyzeDescription(desc);
     if (!structure.ok) return `🟡 Wartung: ${structure.reason}`;
 
-    const serials = extractSerials(desc);
     if (!serials.length) return "🟡 Wartung: Keine S/N";
-    if (serials.length !== qty) {
+
+    if (!(serials.length === qty)) {
       return `🟡 Wartung: Quantity (${qty}) ≠ S/N (${serials.length})`;
     }
 
@@ -203,19 +195,35 @@
      DESCRIPTION STANDARDIZER
      =============================== */
 
+  const DESCRIPTION_LABELS = {
+    de: {
+      location: "Standort:",
+      serviceEnd: "Service Ende:",
+      included: "inkl.:"
+    },
+    en: {
+      location: "Location:",
+      serviceEnd: "Service End:",
+      included: "incl.:"
+    }
+  };
+
   function normalizeDescriptionLanguage(text, lang) {
-    let t = text
+    let t = text;
+
+    // reset to DE
+    t = t
       .replaceAll("Location:", "Standort:")
       .replaceAll("incl.:", "inkl.:")
       .replaceAll("Service End:", "Service Ende:");
 
-    if (lang === "en") {
-      t = t
-        .replaceAll("Standort:", "Location:")
-        .replaceAll("inkl.:", "incl.:")
-        .replaceAll("Service Ende:", "Service End:");
-    }
-    return t;
+    // apply target
+    return lang === "en"
+      ? t
+          .replaceAll("Standort:", "Location:")
+          .replaceAll("inkl.:", "incl.:")
+          .replaceAll("Service Ende:", "Service End:")
+      : t;
   }
 
   function openStandardizer(tr, textarea, meta) {
@@ -223,8 +231,10 @@
     let lang = 'en';
 
     const overlay = document.createElement('div');
-    overlay.style.cssText =
-      'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99999;display:flex;align-items:center;justify-content:center';
+    overlay.style.cssText = `
+      position:fixed; inset:0; background:rgba(0,0,0,.4);
+      z-index:99999; display:flex; align-items:center; justify-content:center;
+    `;
 
     const box = document.createElement('div');
     box.style.cssText = 'background:#fff;padding:12px;width:800px;max-width:90%;font-size:12px';
@@ -294,6 +304,16 @@
     return d;
   }
 
+  function refreshBadgeForRow(tr, meta) {
+    const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
+    const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
+    const qty = getQuantity(tr, rn);
+    const info = tr.querySelector('.vt-prodinfo');
+    if (!info) return;
+    const auditor = ensureAuditor(info);
+    auditor.textContent = auditMaintenance(desc, qty, meta.pn);
+  }
+
   function renderInfo(info, meta) {
     info.innerHTML = `
       <span style="
@@ -312,49 +332,28 @@
     `;
   }
 
-  function refreshBadgeForRow(tr, meta) {
-    const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
-    const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
-    const qty = getQuantity(tr, rn);
-    const info = tr.querySelector('.vt-prodinfo');
-    if (!info) return;
-    const auditor = ensureAuditor(info);
-    auditor.textContent = auditMaintenance(desc, qty);
-  }
-
   function injectButtons(tr, meta) {
     if (tr.querySelector('.hw24-desc-btn')) return;
     const ta = tr.querySelector('textarea[name*="comment"]');
     if (!ta) return;
 
-    const std = document.createElement('button');
-    std.type = 'button';
-    std.className = 'hw24-desc-btn';
-    std.textContent = 'Description standardisieren';
-    std.style.cssText = 'margin-top:4px;font-size:11px';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hw24-desc-btn';
+    btn.textContent = 'Description standardisieren';
+    btn.style.cssText = 'margin-top:4px;font-size:11px';
 
-    std.onclick = e => {
+    btn.onclick = e => {
       e.preventDefault();
       e.stopPropagation();
       openStandardizer(tr, ta, meta);
     };
 
-    const ref = document.createElement('button');
-    ref.type = 'button';
-    ref.textContent = '↻ Badge prüfen';
-    ref.style.cssText = 'margin-left:6px;font-size:11px';
-
-    ref.onclick = e => {
-      e.preventDefault();
-      e.stopPropagation();
-      refreshBadgeForRow(tr, meta);
-    };
-
-    ta.after(std, ref);
+    ta.after(btn);
   }
 
   /* ===============================
-     CORE: EDIT MODE
+     CORE
      =============================== */
 
   async function processEdit() {
