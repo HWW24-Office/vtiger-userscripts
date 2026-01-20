@@ -3,7 +3,7 @@
 // @namespace    hw24.vtiger.maintenance.desc
 // @version      0.1.0
 // @description  Loader for HW24 VTiger Maintenance Description Auditor (analysis-only)
-// @match        https://vtiger.*/*
+// @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
 //
