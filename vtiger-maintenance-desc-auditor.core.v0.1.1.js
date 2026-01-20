@@ -1,92 +1,76 @@
 /*
- * VTiger Maintenance Description Auditor – Core v0.1.2
- * Loaded via Tampermonkey @require
+ * VTiger Maintenance Description Auditor – Core v0.1.4
+ * Compatible with HW24 LineItem Meta Overlay
  * Analysis-only (no auto-write)
  */
 
 (() => {
   "use strict";
 
-  console.log("[HW24] Maintenance Desc Auditor core v0.1.2 loaded");
+  console.log("[HW24] Maintenance Desc Auditor core v0.1.4 loaded");
 
-  /***********************
-   * HELPERS
-   ***********************/
-  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const AUDITOR_CLASS = "hw24-maint-auditor";
 
-  function detectModule() {
-    const url = location.href.toLowerCase();
-    if (url.includes("module=quotes")) return "Quote";
-    if (url.includes("module=salesorder")) return "SalesOrder";
-    if (url.includes("module=purchaseorder")) return "PurchaseOrder";
-    if (url.includes("module=invoice")) return "Invoice";
-    if (url.includes("module=products")) return "Products";
-    return "Unknown";
-  }
-
-  function isEditMode() {
-    return /view=edit/i.test(location.href);
-  }
-
-  function extractSerials(text) {
-    const re = /S\/N:\s*([^\n]+)/gi;
-    const serials = [];
-    let m;
-    while ((m = re.exec(text))) {
-      m[1]
-        .split(/[,;\/]/)
-        .map(s => s.trim())
-        .filter(Boolean)
-        .forEach(sn => serials.push(sn));
+  function ensureAuditorContainer(td) {
+    let c = td.querySelector(`.${AUDITOR_CLASS}`);
+    if (!c) {
+      c = document.createElement("div");
+      c.className = AUDITOR_CLASS;
+      c.style.cssText = `
+        margin-top:6px;
+        font-size:12px;
+        font-weight:bold;
+        padding:2px 6px;
+        background:#eef2ff;
+        border:1px solid #c7d2fe;
+        display:inline-block;
+      `;
+      td.appendChild(c);
     }
-    return [...new Set(serials)];
+    return c;
   }
 
-  /***********************
-   * UI
-   ***********************/
-  function injectBadge(descEl, text) {
-    const badge = document.createElement("div");
-    badge.textContent = text;
-    badge.style.marginTop = "6px";
-    badge.style.padding = "4px 6px";
-    badge.style.fontSize = "12px";
-    badge.style.fontWeight = "bold";
-    badge.style.background = "#fffae6";
-    badge.style.border = "1px solid #e0c97f";
-    badge.style.display = "inline-block";
+  function analyze(desc) {
+    if (!desc) return "🔴 Keine Beschreibung";
 
-    descEl.closest("td").appendChild(badge);
+    const sn = desc.match(/S\/N:/i);
+    const start = desc.match(/Service\s+Start:/i);
+    const end = desc.match(/Service\s+(Ende|End):/i);
+
+    if (!sn) return "🟡 Keine S/N";
+    if (!start || !end) return "🟡 Fehlende Service-Daten";
+    return "🟢 OK";
   }
 
-  /***********************
-   * MAIN
-   ***********************/
-  function run() {
-    if (!isEditMode()) return;
+  function scan() {
+    const rows = document.querySelectorAll(
+      "#lineItemTab tr.lineItemRow, #lineItemTab tr.inventoryRow"
+    );
 
-    const moduleName = detectModule();
-    console.log("[HW24] Auditor running in", moduleName);
+    rows.forEach(tr => {
+      const desc =
+        tr.querySelector('textarea[name*="comment"]')?.value || "";
 
-    // EXTREM robust: finde jede Description-Textarea
-    const descFields = $$("textarea[name*='comment']");
+      const nameCell =
+        tr.querySelector('input[id^="productName"]')?.closest("td") ||
+        tr.querySelector('a[href*="module=Products"]')?.closest("td");
 
-    console.log("[HW24] Found description fields:", descFields.length);
+      if (!nameCell) return;
 
-    descFields.forEach((descEl, idx) => {
-      const text = descEl.value || "";
-      const serials = extractSerials(text);
-
-      console.log(`[HW24] Row ${idx + 1}`, { serials });
-
-      injectBadge(
-        descEl,
-        serials.length
-          ? `🧪 TEST Badge – ${serials.length} S/N erkannt`
-          : `🧪 TEST Badge – keine S/N erkannt`
-      );
+      const auditor = ensureAuditorContainer(nameCell);
+      auditor.textContent = analyze(desc);
     });
   }
 
-  run();
+  // Initial run
+  scan();
+
+  // Re-run whenever Meta Overlay or VTiger re-renders
+  const tbl = document.querySelector("#lineItemTab");
+  if (tbl) {
+    const obs = new MutationObserver(() => scan());
+    obs.observe(tbl, { childList: true, subtree: true });
+  }
+
+  console.log("[HW24] Maintenance Desc Auditor observer active");
 })();
