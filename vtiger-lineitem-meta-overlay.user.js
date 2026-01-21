@@ -82,6 +82,47 @@
     const v = parseInt(q?.value, 10);
     return Number.isFinite(v) ? v : 0;
   }
+  function hasBadSerialFormat(desc) {
+  if (!desc) return false;
+  const m = desc.match(/S\/N:\s*([^\n]+)/i);
+  if (!m) return false;
+  return m[1].includes(';') || /,[^\s]/.test(m[1]);
+}
+
+function fixSerialFormat(desc) {
+  return desc.replace(/S\/N:\s*([^\n]+)/i, (_, s) => {
+    const fixed = s
+      .replace(/;/g, ',')
+      .replace(/,\s*/g, ', ');
+    return 'S/N: ' + fixed;
+  });
+}
+function fixServiceDates(desc) {
+  return desc.replace(
+    /(Service (Start|Ende|End):)(\s*)([^\n]+)/gi,
+    (m, label, _, space, value) => {
+      const v = value.trim();
+      if (/^(tba|\[nichtangegeben\])$/i.test(v)) {
+        return `${label} ${v}`;
+      }
+      if (/^\d{2}\.\d{2}\.\d{4}$/.test(v)) {
+        return `${label} ${v}`;
+      }
+      return m;
+    }
+  );
+}
+function calcMarkup(tr, rn) {
+  const pc = parseFloat(tr.querySelector(`#purchaseCost${rn}`)?.value || 0);
+  const sp = parseFloat(tr.querySelector(`#listPrice${rn}`)?.value || 0);
+  const qty = getQuantity(tr, rn);
+
+  if (!pc || !sp || !qty) return null;
+
+  const pcPerUnit = pc / qty;
+  return (sp / pcPerUnit).toFixed(2);
+}
+
 
   /* ===============================
      META FETCH (unchanged)
@@ -209,6 +250,11 @@
 
     if (!(serials.length === qty)) {
       return `🟡 Wartung: Quantity (${qty}) ≠ S/N (${serials.length})`;
+    
+      if (hasBadSerialFormat(desc)) {
+      return "🟡 Wartung: S/N Format (Komma / Semikolon)";
+    }
+
     }
 
     return "🟢 Wartung: OK";
@@ -271,8 +317,13 @@
     prevTA.readOnly = true;
     prevTA.style.cssText = 'width:100%;height:140px';
 
-    const update = () => prevTA.value = normalizeDescriptionLanguage(original, lang);
-    update();
+    const update = () => {
+    let t = normalizeDescriptionLanguage(original, lang);
+    t = fixSerialFormat(t);
+    t = fixServiceDates(t);
+    prevTA.value = t;
+  };
+
 
     const switcher = document.createElement('div');
     switcher.innerHTML = `
@@ -338,22 +389,32 @@
   }
 
   function renderInfo(info, meta) {
-    info.innerHTML = `
-      <span style="
-        display:inline-block;
-        padding:2px 6px;
-        border-radius:999px;
-        background:${colorForVendor(meta.vendor)};
-        color:#fff;
-        font-size:11px;
-        margin-right:6px
-      ">${meta.vendor || '—'}</span>
-      PN: ${meta.pn || '—'}
-      • SLA: ${meta.sla || '—'}
-      • Duration: ${meta.duration || '—'}
-      • Country: ${meta.country || '—'}
-    `;
-  }
+  const tr = info.closest('tr');
+  const rn =
+    tr?.getAttribute('data-row-num') ||
+    tr?.id?.replace('row', '') ||
+    '';
+
+  const markup = tr ? calcMarkup(tr, rn) : null;
+
+  info.innerHTML = `
+    <span style="
+      display:inline-block;
+      padding:2px 6px;
+      border-radius:999px;
+      background:${colorForVendor(meta.vendor)};
+      color:#fff;
+      font-size:11px;
+      margin-right:6px
+    ">${meta.vendor || '—'}</span>
+    PN: ${meta.pn || '—'}
+    • SLA: ${meta.sla || '—'}
+    • Duration: ${meta.duration || '—'}
+    • Country: ${meta.country || '—'}
+    • Markup: ${markup ? markup : '—'}
+  `;
+}
+
 
   function injectButtons(tr, meta) {
     if (tr.querySelector('.hw24-desc-btn')) return;
@@ -374,6 +435,28 @@
 
     ta.after(btn);
   }
+  function injectGlobalFixButton() {
+  if (document.getElementById('hw24-global-fix')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'hw24-global-fix';
+  btn.type = 'button';
+  btn.textContent = 'Alle Descriptions korrigieren';
+  btn.style.cssText = 'margin:8px 0;font-size:12px';
+
+  btn.onclick = () => {
+    document.querySelectorAll('tr.lineItemRow, tr.inventoryRow').forEach(tr => {
+      const ta = tr.querySelector('textarea[name*="comment"]');
+      if (!ta) return;
+      ta.value = fixServiceDates(fixSerialFormat(ta.value));
+      refreshBadgeForRow(tr, {});
+    });
+  };
+
+  const tbl = document.querySelector('#lineItemTab');
+  tbl?.parentElement?.insertBefore(btn, tbl);
+}
+
 
   /* ===============================
      CORE
@@ -407,6 +490,8 @@
 
       refreshBadgeForRow(tr, meta);
       injectButtons(tr, meta);
+      injectGlobalFixButton();
+
     }
   }
 
