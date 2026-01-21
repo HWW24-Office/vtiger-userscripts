@@ -131,35 +131,58 @@
   };
 
   function analyzeDescription(desc) {
-    const lines = desc.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const lines = desc
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
 
-    const found = [];
-    for (const l of lines) {
-      const key = Object.values(LABELS).flat().find(k => l.startsWith(k));
-      if (key) found.push(key);
-    }
+  const DE_ONLY = ["Standort:", "inkl.:", "Service Ende:"];
+  const EN_ONLY = ["Location:", "incl.:", "Service End:"];
 
-    const isDE = found.some(f => LABELS.de.includes(f));
-    const isEN = found.some(f => LABELS.en.includes(f));
-    if (isDE && isEN) return { ok: false, reason: "Sprachmix" };
+  let hasDE = false;
+  let hasEN = false;
 
-    const base = isEN ? LABELS.en : LABELS.de;
-    let lastIndex = -1;
+  for (const l of lines) {
+    if (DE_ONLY.some(k => l.startsWith(k))) hasDE = true;
+    if (EN_ONLY.some(k => l.startsWith(k))) hasEN = true;
+  }
 
-    for (const f of found) {
-      const idx = base.indexOf(f);
-      if (idx === -1 || idx < lastIndex) {
+  if (hasDE && hasEN) {
+    return { ok: false, reason: "Sprachmix" };
+  }
+
+  // Reihenfolge prüfen (sprachneutral!)
+  const ORDER = [
+    "S/N:",
+    "inkl.:|incl.:",
+    "Standort:|Location:",
+    "Service Start:",
+    "Service Ende:|Service End:"
+  ];
+
+  let lastIndex = -1;
+
+  for (const o of ORDER) {
+    const re = new RegExp(`^(${o})`);
+    const idx = lines.findIndex(l => re.test(l));
+    if (idx !== -1) {
+      if (idx < lastIndex) {
         return { ok: false, reason: "Reihenfolge" };
       }
       lastIndex = idx;
     }
-
-    if (!found.includes("Service Start:") || !(found.includes("Service Ende:") || found.includes("Service End:"))) {
-      return { ok: false, reason: "Service-Daten fehlen" };
-    }
-
-    return { ok: true };
   }
+
+  if (
+    !lines.some(l => l.startsWith("Service Start:")) ||
+    !lines.some(l => l.startsWith("Service Ende:") || l.startsWith("Service End:"))
+  ) {
+    return { ok: false, reason: "Service-Daten fehlen" };
+  }
+
+  return { ok: true };
+}
+
 
   /* ===============================
      AUDITOR (extended)
