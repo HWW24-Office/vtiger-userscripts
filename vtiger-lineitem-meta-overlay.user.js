@@ -2,7 +2,7 @@
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
 // @version      1.2.5
-// @description  Show product number (PROxxxxx), audit maintenance descriptions and enforce description structure
+// @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce structure, fix formats and display markup
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -82,50 +82,25 @@
     const v = parseInt(q?.value, 10);
     return Number.isFinite(v) ? v : 0;
   }
-  function hasBadSerialFormat(desc) {
-  if (!desc) return false;
-  const m = desc.match(/S\/N:\s*([^\n]+)/i);
-  if (!m) return false;
-  return m[1].includes(';') || /,[^\s]/.test(m[1]);
-}
-
-function fixSerialFormat(desc) {
-  return desc.replace(/S\/N:\s*([^\n]+)/i, (_, s) => {
-    const fixed = s
-      .replace(/;/g, ',')
-      .replace(/,\s*/g, ', ');
-    return 'S/N: ' + fixed;
-  });
-}
-function fixServiceDates(desc) {
-  return desc.replace(
-    /(Service (Start|Ende|End):)(\s*)([^\n]+)/gi,
-    (m, label, _, space, value) => {
-      const v = value.trim();
-      if (/^(tba|\[nichtangegeben\])$/i.test(v)) {
-        return `${label} ${v}`;
-      }
-      if (/^\d{2}\.\d{2}\.\d{4}$/.test(v)) {
-        return `${label} ${v}`;
-      }
-      return m;
-    }
-  );
-}
-function calcMarkup(tr, rn) {
-  const pc = parseFloat(tr.querySelector(`#purchaseCost${rn}`)?.value || 0);
-  const sp = parseFloat(tr.querySelector(`#listPrice${rn}`)?.value || 0);
-  const qty = getQuantity(tr, rn);
-
-  if (!pc || !sp || !qty) return null;
-
-  const pcPerUnit = pc / qty;
-  return (sp / pcPerUnit).toFixed(2);
-}
-
 
   /* ===============================
-     META FETCH (unchanged)
+     PRICE / MARKUP
+     =============================== */
+
+  // NEW
+  function calcMarkup(tr, rn) {
+    const pc = parseFloat(tr.querySelector(`#purchaseCost${rn}`)?.value || 0);
+    const sp = parseFloat(tr.querySelector(`#listPrice${rn}`)?.value || 0);
+    const qty = getQuantity(tr, rn);
+
+    if (!pc || !sp || !qty) return null;
+
+    const pcPerUnit = pc / qty;
+    return (sp / pcPerUnit).toFixed(2);
+  }
+
+  /* ===============================
+     META FETCH
      =============================== */
 
   async function fetchMeta(url) {
@@ -163,71 +138,34 @@ function calcMarkup(tr, rn) {
   }
 
   /* ===============================
-     DESCRIPTION ORDER + LANGUAGE AUDIT
+     DESCRIPTION ANALYSIS
      =============================== */
-
-  const LABELS = {
-    de: ["S/N:", "inkl.:", "Standort:", "Service Start:", "Service Ende:"],
-    en: ["S/N:", "incl.:", "Location:", "Service Start:", "Service End:"]
-  };
 
   function analyzeDescription(desc) {
-  const lines = desc
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(Boolean);
+    const lines = desc.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-  const DE_ONLY = ["Standort:", "inkl.:", "Service Ende:"];
-  const EN_ONLY = ["Location:", "incl.:", "Service End:"];
+    const DE_ONLY = ["Standort:", "inkl.:", "Service Ende:"];
+    const EN_ONLY = ["Location:", "incl.:", "Service End:"];
 
-  let hasDE = false;
-  let hasEN = false;
+    let hasDE = false;
+    let hasEN = false;
 
-  for (const l of lines) {
-    if (DE_ONLY.some(k => l.startsWith(k))) hasDE = true;
-    if (EN_ONLY.some(k => l.startsWith(k))) hasEN = true;
-  }
-
-  if (hasDE && hasEN) {
-    return { ok: false, reason: "Sprachmix" };
-  }
-
-  // Reihenfolge prüfen (sprachneutral!)
-  const ORDER = [
-    "S/N:",
-    "inkl.:|incl.:",
-    "Standort:|Location:",
-    "Service Start:",
-    "Service Ende:|Service End:"
-  ];
-
-  let lastIndex = -1;
-
-  for (const o of ORDER) {
-    const re = new RegExp(`^(${o})`);
-    const idx = lines.findIndex(l => re.test(l));
-    if (idx !== -1) {
-      if (idx < lastIndex) {
-        return { ok: false, reason: "Reihenfolge" };
-      }
-      lastIndex = idx;
+    for (const l of lines) {
+      if (DE_ONLY.some(k => l.startsWith(k))) hasDE = true;
+      if (EN_ONLY.some(k => l.startsWith(k))) hasEN = true;
     }
+
+    if (hasDE && hasEN) return { ok: false, reason: "Sprachmix" };
+
+    if (
+      !lines.some(l => l.startsWith("Service Start:")) ||
+      !lines.some(l => l.startsWith("Service Ende:") || l.startsWith("Service End:"))
+    ) {
+      return { ok: false, reason: "Service-Daten fehlen" };
+    }
+
+    return { ok: true };
   }
-
-  if (
-    !lines.some(l => l.startsWith("Service Start:")) ||
-    !lines.some(l => l.startsWith("Service Ende:") || l.startsWith("Service End:"))
-  ) {
-    return { ok: false, reason: "Service-Daten fehlen" };
-  }
-
-  return { ok: true };
-}
-
-
-  /* ===============================
-     AUDITOR (extended)
-     =============================== */
 
   function extractSerials(desc) {
     const out = [];
@@ -239,117 +177,64 @@ function calcMarkup(tr, rn) {
     return [...new Set(out)];
   }
 
-  function auditMaintenance(desc, qty, productName) {
-    if (!desc) return "🔴 Wartung: Keine Beschreibung";
-
-    const serials = extractSerials(desc);
-    const structure = analyzeDescription(desc);
-    if (!structure.ok) return `🟡 Wartung: ${structure.reason}`;
-
-    if (!serials.length) return "🟡 Wartung: Keine S/N";
-
-    if (!(serials.length === qty)) {
-      return `🟡 Wartung: Quantity (${qty}) ≠ S/N (${serials.length})`;
-    
-      if (hasBadSerialFormat(desc)) {
-      return "🟡 Wartung: S/N Format (Komma / Semikolon)";
-    }
-
-    }
-
-    return "🟢 Wartung: OK";
+  // NEW
+  function hasBadSerialFormat(desc) {
+    const m = desc.match(/S\/N:\s*([^\n]+)/i);
+    if (!m) return false;
+    return m[1].includes(';') || /,[^\s]/.test(m[1]);
   }
 
   /* ===============================
-     DESCRIPTION STANDARDIZER
+     FIXERS
      =============================== */
 
-  const DESCRIPTION_LABELS = {
-    de: {
-      location: "Standort:",
-      serviceEnd: "Service Ende:",
-      included: "inkl.:"
-    },
-    en: {
-      location: "Location:",
-      serviceEnd: "Service End:",
-      included: "incl.:"
-    }
-  };
-
-  function normalizeDescriptionLanguage(text, lang) {
-    let t = text;
-
-    // reset to DE
-    t = t
-      .replaceAll("Location:", "Standort:")
-      .replaceAll("incl.:", "inkl.:")
-      .replaceAll("Service End:", "Service Ende:");
-
-    // apply target
-    return lang === "en"
-      ? t
-          .replaceAll("Standort:", "Location:")
-          .replaceAll("inkl.:", "incl.:")
-          .replaceAll("Service Ende:", "Service End:")
-      : t;
+  // NEW
+  function fixSerialFormat(desc) {
+    return desc.replace(/S\/N:\s*([^\n]+)/i, (_, s) =>
+      'S/N: ' + s.replace(/;/g, ',').replace(/,\s*/g, ', ')
+    );
   }
 
-  function openStandardizer(tr, textarea, meta) {
-    const original = textarea.value;
-    let lang = 'en';
-
-    const overlay = document.createElement('div');
-    overlay.style.cssText = `
-      position:fixed; inset:0; background:rgba(0,0,0,.4);
-      z-index:99999; display:flex; align-items:center; justify-content:center;
-    `;
-
-    const box = document.createElement('div');
-    box.style.cssText = 'background:#fff;padding:12px;width:800px;max-width:90%;font-size:12px';
-
-    const origTA = document.createElement('textarea');
-    origTA.readOnly = true;
-    origTA.style.cssText = 'width:100%;height:140px';
-    origTA.value = original;
-
-    const prevTA = document.createElement('textarea');
-    prevTA.readOnly = true;
-    prevTA.style.cssText = 'width:100%;height:140px';
-
-    const update = () => {
-    let t = normalizeDescriptionLanguage(original, lang);
-    t = fixSerialFormat(t);
-    t = fixServiceDates(t);
-    prevTA.value = t;
-  };
-
-
-    const switcher = document.createElement('div');
-    switcher.innerHTML = `
-      <button type="button" data-lang="de">DE</button>
-      <button type="button" data-lang="en">EN</button>
-    `;
-    switcher.querySelectorAll('button').forEach(b =>
-      b.onclick = () => { lang = b.dataset.lang; update(); }
-    );
-
-    const actions = document.createElement('div');
-    actions.innerHTML = `
-      <button type="button" id="apply">Apply</button>
-      <button type="button" id="cancel">Cancel</button>
-    `;
-    actions.onclick = e => {
-      if (e.target.id === 'apply') {
-        textarea.value = prevTA.value;
-        refreshBadgeForRow(tr, meta);
+  // NEW
+  function fixServiceDates(desc) {
+    return desc.replace(
+      /(Service (Start|Ende|End):)\s*([^\n]+)/gi,
+      (m, label, _, value) => {
+        const v = value.trim();
+        if (/^(tba|\[nichtangegeben\])$/i.test(v)) return `${label} ${v}`;
+        if (/^\d{2}\.\d{2}\.\d{4}$/.test(v)) return `${label} ${v}`;
+        return m;
       }
-      overlay.remove();
-    };
+    );
+  }
 
-    box.append('Original', origTA, 'Vorschau', switcher, prevTA, actions);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
+  // NEW
+  function applyAllFixes(text) {
+    return fixServiceDates(fixSerialFormat(text));
+  }
+
+  /* ===============================
+     AUDITOR
+     =============================== */
+
+  function auditMaintenance(desc, qty) {
+    if (!desc) return "🔴 Wartung: Keine Beschreibung";
+
+    if (hasBadSerialFormat(desc)) {
+      return "🟡 Wartung: S/N Format";
+    }
+
+    const structure = analyzeDescription(desc);
+    if (!structure.ok) return `🟡 Wartung: ${structure.reason}`;
+
+    const serials = extractSerials(desc);
+    if (!serials.length) return "🟡 Wartung: Keine S/N";
+
+    if (serials.length !== qty) {
+      return `🟡 Wartung: Quantity (${qty}) ≠ S/N (${serials.length})`;
+    }
+
+    return "🟢 Wartung: OK";
   }
 
   /* ===============================
@@ -378,91 +263,151 @@ function calcMarkup(tr, rn) {
     return d;
   }
 
-  function refreshBadgeForRow(tr, meta) {
+  function renderInfo(info, meta) {
+    const tr = info.closest('tr');
+    const rn =
+      tr?.getAttribute('data-row-num') ||
+      tr?.id?.replace('row', '') ||
+      '';
+
+    const markup = tr ? calcMarkup(tr, rn) : null;
+
+    info.innerHTML = `
+      <span style="
+        display:inline-block;
+        padding:2px 6px;
+        border-radius:999px;
+        background:${colorForVendor(meta.vendor)};
+        color:#fff;
+        font-size:11px;
+        margin-right:6px
+      ">${meta.vendor || '—'}</span>
+      PN: ${meta.pn || '—'}
+      • SLA: ${meta.sla || '—'}
+      • Duration: ${meta.duration || '—'}
+      • Country: ${meta.country || '—'}
+      • Markup: ${markup || '—'}
+    `;
+  }
+
+  function refreshBadgeForRow(tr) {
     const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
     const desc = tr.querySelector('textarea[name*="comment"]')?.value || '';
     const qty = getQuantity(tr, rn);
     const info = tr.querySelector('.vt-prodinfo');
     if (!info) return;
     const auditor = ensureAuditor(info);
-    auditor.textContent = auditMaintenance(desc, qty, meta.pn);
+    auditor.textContent = auditMaintenance(desc, qty);
   }
 
-  function renderInfo(info, meta) {
-  const tr = info.closest('tr');
-  const rn =
-    tr?.getAttribute('data-row-num') ||
-    tr?.id?.replace('row', '') ||
-    '';
+  /* ===============================
+     DESCRIPTION STANDARDIZER (OVERLAY)
+     =============================== */
 
-  const markup = tr ? calcMarkup(tr, rn) : null;
+  function openStandardizer(tr, textarea) {
+    const original = textarea.value;
 
-  info.innerHTML = `
-    <span style="
-      display:inline-block;
-      padding:2px 6px;
-      border-radius:999px;
-      background:${colorForVendor(meta.vendor)};
-      color:#fff;
-      font-size:11px;
-      margin-right:6px
-    ">${meta.vendor || '—'}</span>
-    PN: ${meta.pn || '—'}
-    • SLA: ${meta.sla || '—'}
-    • Duration: ${meta.duration || '—'}
-    • Country: ${meta.country || '—'}
-    • Markup: ${markup ? markup : '—'}
-  `;
-}
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:fixed; inset:0; background:rgba(0,0,0,.4);
+      z-index:99999; display:flex; align-items:center; justify-content:center;
+    `;
 
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;padding:12px;width:800px;max-width:90%;font-size:12px';
 
-  function injectButtons(tr, meta) {
+    const origTA = document.createElement('textarea');
+    origTA.readOnly = true;
+    origTA.style.cssText = 'width:100%;height:140px';
+    origTA.value = original;
+
+    const prevTA = document.createElement('textarea');
+    prevTA.readOnly = true;
+    prevTA.style.cssText = 'width:100%;height:140px';
+    prevTA.value = applyAllFixes(original);
+
+    const actions = document.createElement('div');
+    actions.innerHTML = `
+      <button type="button" id="apply">Apply</button>
+      <button type="button" id="cancel">Cancel</button>
+    `;
+
+    actions.onclick = e => {
+      if (e.target.id === 'apply') {
+        textarea.value = prevTA.value;
+        refreshBadgeForRow(tr);
+      }
+      overlay.remove();
+    };
+
+    box.append('Original', origTA, 'Vorschau', prevTA, actions);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+  }
+
+  /* ===============================
+     BUTTONS
+     =============================== */
+
+  function injectButtons(tr) {
     if (tr.querySelector('.hw24-desc-btn')) return;
+
     const ta = tr.querySelector('textarea[name*="comment"]');
     if (!ta) return;
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'hw24-desc-btn';
-    btn.textContent = 'Description standardisieren';
-    btn.style.cssText = 'margin-top:4px;font-size:11px';
+    const std = document.createElement('button');
+    std.type = 'button';
+    std.className = 'hw24-desc-btn';
+    std.textContent = 'Description standardisieren';
+    std.style.cssText = 'margin-top:4px;font-size:11px';
 
-    btn.onclick = e => {
+    std.onclick = e => {
       e.preventDefault();
       e.stopPropagation();
-      openStandardizer(tr, ta, meta);
+      openStandardizer(tr, ta);
     };
 
-    ta.after(btn);
+    const refresh = document.createElement('button');
+    refresh.type = 'button';
+    refresh.textContent = 'Refresh Check';
+    refresh.style.cssText = 'margin-top:4px;margin-left:6px;font-size:11px';
+
+    refresh.onclick = () => refreshBadgeForRow(tr);
+
+    ta.after(std, refresh);
   }
+
+  // NEW
   function injectGlobalFixButton() {
-  if (document.getElementById('hw24-global-fix')) return;
+    if (!isEdit) return;
+    if (document.getElementById('hw24-global-fix')) return;
 
-  const btn = document.createElement('button');
-  btn.id = 'hw24-global-fix';
-  btn.type = 'button';
-  btn.textContent = 'Alle Descriptions korrigieren';
-  btn.style.cssText = 'margin:8px 0;font-size:12px';
+    const btn = document.createElement('button');
+    btn.id = 'hw24-global-fix';
+    btn.type = 'button';
+    btn.textContent = 'Alle Descriptions korrigieren';
+    btn.style.cssText = 'margin:8px 0;font-size:12px';
 
-  btn.onclick = () => {
-    document.querySelectorAll('tr.lineItemRow, tr.inventoryRow').forEach(tr => {
-      const ta = tr.querySelector('textarea[name*="comment"]');
-      if (!ta) return;
-      ta.value = fixServiceDates(fixSerialFormat(ta.value));
-      refreshBadgeForRow(tr, {});
-    });
-  };
+    btn.onclick = () => {
+      document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow').forEach(tr => {
+        const ta = tr.querySelector('textarea[name*="comment"]');
+        if (!ta) return;
+        ta.value = applyAllFixes(ta.value);
+        refreshBadgeForRow(tr);
+      });
+    };
 
-  const tbl = document.querySelector('#lineItemTab');
-  tbl?.parentElement?.insertBefore(btn, tbl);
-}
-
+    const tbl = document.querySelector('#lineItemTab');
+    tbl?.parentElement?.insertBefore(btn, tbl);
+  }
 
   /* ===============================
      CORE
      =============================== */
 
   async function processEdit() {
+    injectGlobalFixButton();
+
     const tbl = document.querySelector('#lineItemTab');
     if (!tbl) return;
 
@@ -471,27 +416,24 @@ function calcMarkup(tr, rn) {
     for (const tr of rows) {
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
 
-      const nameEl =
-        tr.querySelector('#productName' + rn) ||
-        tr.querySelector('input[id^="productName"]') ||
-        tr.querySelector('a[href*="module=Products"]');
-
-      const td = nameEl?.closest('td');
-      if (!td) continue;
-
       const hid =
         tr.querySelector(`input[name="hdnProductId${rn}"]`) ||
         tr.querySelector('input[name^="hdnProductId"]');
+
       if (!hid?.value) continue;
+
+      const td =
+        tr.querySelector(`#productName${rn}`)?.closest('td') ||
+        tr.querySelector('a[href*="module=Products"]')?.closest('td');
+
+      if (!td) continue;
 
       const meta = await fetchMeta(`index.php?module=Products&view=Detail&record=${hid.value}`);
       const info = ensureInfo(td);
+
       renderInfo(info, meta);
-
-      refreshBadgeForRow(tr, meta);
-      injectButtons(tr, meta);
-      injectGlobalFixButton();
-
+      refreshBadgeForRow(tr);
+      injectButtons(tr);
     }
   }
 
