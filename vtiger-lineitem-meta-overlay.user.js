@@ -33,9 +33,6 @@
 
   if (!isEdit && !isDetail) return;
 
-  const currentModule =
-    location.href.match(new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`))?.[1] || '';
-
   /* ===============================
      CONFIG
      =============================== */
@@ -81,9 +78,7 @@
 
   function getFieldNumber(el) {
     if (!el) return 0;
-    // input/select
     if ('value' in el) return toNum(el.value);
-    // div/span
     return toNum(el.textContent);
   }
 
@@ -95,39 +90,62 @@
       tr.querySelector(`input[name="quantity${rn}"]`) ||
       tr.querySelector(`#qty${rn}_display`) ||
       tr.querySelector(`#quantity${rn}_display`);
+
     const v = parseInt(S(q?.value ?? q?.textContent), 10);
     return Number.isFinite(v) ? v : 0;
   }
 
-  function getPurchaseCost(tr, rn) {
+  // Robust: Purchase Cost can be input (Edit) OR display span/div (Detail)
+  function getPurchaseCostPerUnit(tr, rn) {
     const el =
       tr.querySelector(`#purchaseCost${rn}`) ||
       tr.querySelector(`input[name="purchaseCost${rn}"]`) ||
-      tr.querySelector(`#purchaseCost${rn}_display`);
+      tr.querySelector(`#purchaseCost${rn}_display`) ||
+      tr.querySelector(`span#purchaseCost${rn}_display`) ||
+      tr.querySelector(`div#purchaseCost${rn}_display`) ||
+      tr.querySelector(`[id="purchaseCost${rn}_display"]`) ||
+      tr.querySelector(`.purchaseCost${rn}`) ||
+      tr.querySelector(`.purchaseCost`);
+
     return getFieldNumber(el);
   }
 
+  // Your example: <div id="productTotal1" class="productTotal">1562.50</div>
   function getLineItemTotal(tr, rn) {
     const el =
       tr.querySelector(`#productTotal${rn}`) ||
+      tr.querySelector(`div#productTotal${rn}`) ||
+      tr.querySelector(`#productTotal${rn}_display`) ||
       tr.querySelector(`#netPrice${rn}`) ||
-      tr.querySelector(`#productTotal${rn}_display`);
+      tr.querySelector(`#netPrice${rn}_display`);
+
     return getFieldNumber(el);
   }
 
   /* ===============================
-     MARKUP (Total / Purchase Cost)
+     MARKUP (Total / (PC per unit * Qty))
      =============================== */
 
-  function calcMarkup(tr, rn) {
-    const pc = getPurchaseCost(tr, rn);
-    const total = getLineItemTotal(tr, rn);
-    if (!pc || !total) return null;
+  function calcMarkupFromProduct(tr, rn, meta) {
+    const totalEl =
+      tr.querySelector(`#productTotal${rn}`) ||
+      tr.querySelector(`#netPrice${rn}`) ||
+      tr.querySelector(`#productTotal${rn}_display`);
+  
+    const total = parseFloat(
+      (totalEl?.textContent || totalEl?.value || '').replace(',', '.')
+    );
+  
+    const pc = parseFloat(meta?.purchaseCost || 0);
+  
+    if (!total || !pc) return null;
+  
     return (total / pc).toFixed(2);
   }
 
+
   /* ===============================
-     META FETCH (unchanged)
+     META FETCH
      =============================== */
 
   async function fetchMeta(url) {
@@ -154,8 +172,12 @@
         vendor: getVal('vendor'),
         sla: getVal('sla'),
         duration: getVal('duration'),
-        country: getVal('country')
+        country: getVal('country'),
+        purchaseCost: parseFloat(
+          (getVal('purchase cost') || '').replace(',', '.')
+        ) || 0
       };
+      
 
       mem.set(url, meta);
       return meta;
@@ -173,7 +195,6 @@
     en: ["S/N:", "incl.:", "Location:", "Service Start:", "Service End:"]
   };
 
-  // Fix: Sprachdetektion nur über sprachspezifische Labels (Service Start ist neutral)
   function analyzeDescription(desc) {
     const lines = desc.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
@@ -182,33 +203,29 @@
 
     const hasDE = lines.some(l => DE_ONLY.some(k => l.startsWith(k)));
     const hasEN = lines.some(l => EN_ONLY.some(k => l.startsWith(k)));
+
     if (hasDE && hasEN) return { ok: false, reason: "Sprachmix" };
 
-    // Reihenfolge grob prüfen (zeilenbasiert, wie v1.2.5)
     const base = hasEN ? LABELS.en : LABELS.de;
     let lastIndex = -1;
 
     const found = [];
     for (const l of lines) {
-      const key = base.find(k => l.startsWith(k));
+      const key = Object.values(LABELS).flat().find(k => l.startsWith(k));
       if (key) found.push(key);
-      else {
-        // erlauben wir "S/N:" auch, wenn Sprache nicht eindeutig
-        const anyKey = Object.values(LABELS).flat().find(k => l.startsWith(k));
-        if (anyKey) found.push(anyKey);
-      }
     }
 
     for (const f of found) {
       const idx = base.indexOf(f);
-      if (idx !== -1) {
-        if (idx < lastIndex) return { ok: false, reason: "Reihenfolge" };
-        lastIndex = idx;
-      }
+      if (idx === -1) continue;
+      if (idx < lastIndex) return { ok: false, reason: "Reihenfolge" };
+      lastIndex = idx;
     }
 
-    if (!lines.some(l => l.startsWith("Service Start:")) ||
-        !lines.some(l => l.startsWith("Service Ende:") || l.startsWith("Service End:"))) {
+    if (
+      !lines.some(l => l.startsWith("Service Start:")) ||
+      !lines.some(l => l.startsWith("Service Ende:") || l.startsWith("Service End:"))
+    ) {
       return { ok: false, reason: "Service-Daten fehlen" };
     }
 
@@ -241,7 +258,7 @@
     if (isValidDDMMYYYY(raw)) {
       return { line: `${label} ${raw}`, ok: true };
     }
-    // Leerzeichen wird korrigiert, Inhalt bleibt -> ok:false (ROT)
+
     return { line: `${label} ${raw}`, ok: false };
   }
 
@@ -252,7 +269,7 @@
   }
 
   /* ===============================
-     AUDITOR (extended)
+     AUDITOR
      =============================== */
 
   function extractSerials(desc) {
@@ -260,7 +277,6 @@
     const re = /S\/N:\s*([^\n]+)/gi;
     let m;
     while ((m = re.exec(desc))) {
-      // auditor akzeptiert weiterhin , ; / als Trenner
       m[1].split(/[,;\/]/).map(s => s.trim()).filter(Boolean).forEach(sn => out.push(sn));
     }
     return [...new Set(out)];
@@ -269,17 +285,12 @@
   function hasBadSerialFormat(desc) {
     const m = desc.match(/S\/N:\s*([^\n]+)/i);
     if (!m) return false;
-    // Gelb, wenn ; verwendet wird oder wenn nach "," kein Leerzeichen folgt
     return m[1].includes(';') || /,[^\s]/.test(m[1]);
   }
 
   function auditMaintenance(desc, qty) {
     if (!desc) return "🔴 Wartung: Keine Beschreibung";
-
-    // ROT: Datum kaputt
     if (hasInvalidServiceDate(desc)) return "🔴 Wartung: Ungültiges Datum";
-
-    // GELB: Seriennummern nicht norm-konform
     if (hasBadSerialFormat(desc)) return "🟡 Wartung: S/N Format";
 
     const structure = analyzeDescription(desc);
@@ -288,7 +299,7 @@
     const serials = extractSerials(desc);
     if (!serials.length) return "🟡 Wartung: Keine S/N";
 
-    if (!(serials.length === qty)) {
+    if (serials.length !== qty) {
       return `🟡 Wartung: Quantity (${qty}) ≠ S/N (${serials.length})`;
     }
 
@@ -296,21 +307,8 @@
   }
 
   /* ===============================
-     DESCRIPTION STANDARDIZER
+     STANDARDIZER + FIXERS
      =============================== */
-
-  const DESCRIPTION_LABELS = {
-    de: {
-      location: "Standort:",
-      serviceEnd: "Service Ende:",
-      included: "inkl.:"
-    },
-    en: {
-      location: "Location:",
-      serviceEnd: "Service End:",
-      included: "incl.:"
-    }
-  };
 
   function normalizeDescriptionLanguage(text, lang) {
     let t = text;
@@ -330,7 +328,6 @@
       : t;
   }
 
-  // NEW: Fixer für S/N und Service Dates (Leerzeichen + strict recognition)
   function fixSerialFormat(desc) {
     return desc.replace(/S\/N:\s*([^\n]+)/i, (_, s) =>
       'S/N: ' + s.replace(/;/g, ',').replace(/,\s*/g, ', ')
@@ -369,7 +366,6 @@
     prevTA.style.cssText = 'width:100%;height:140px';
 
     const update = () => {
-      // erst Sprach-Standardisierung, dann Fixer (S/N + Dates)
       const t = applyAllFixes(normalizeDescriptionLanguage(original, lang));
       prevTA.value = t;
     };
@@ -394,7 +390,7 @@
     actions.onclick = e => {
       if (e.target.id === 'apply') {
         textarea.value = prevTA.value;
-        refreshBadgeForRow(tr);
+        refreshBadgeForRow(tr, {});
       }
       overlay.remove();
     };
@@ -432,12 +428,15 @@
 
   function refreshBadgeForRow(tr) {
     const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
-    const desc = tr.querySelector('textarea[name*="comment"]')?.value
-              || tr.querySelector(`#comment${rn}`)?.value
-              || '';
+    const desc =
+      tr.querySelector('textarea[name*="comment"]')?.value ||
+      tr.querySelector(`#comment${rn}`)?.value ||
+      '';
+
     const qty = getQuantity(tr, rn);
     const info = tr.querySelector('.vt-prodinfo');
     if (!info) return;
+
     const auditor = ensureAuditor(info);
     auditor.textContent = auditMaintenance(desc, qty);
   }
@@ -445,7 +444,8 @@
   function renderInfo(info, meta) {
     const tr = info.closest('tr');
     const rn = tr?.getAttribute('data-row-num') || tr?.id?.replace('row', '') || '';
-    const markup = tr ? calcMarkup(tr, rn) : null;
+    const markup = calcMarkupFromProduct(tr, rn, meta);
+    ;
 
     info.innerHTML = `
       <span style="
@@ -506,7 +506,6 @@
 
   function injectGlobalFixButton() {
     if (!isEdit) return;
-
     if (document.getElementById('hw24-global-fix')) return;
 
     const btn = document.createElement('button');
@@ -518,8 +517,8 @@
     btn.onclick = () => {
       const tbl = document.querySelector('#lineItemTab');
       if (!tbl) return;
-
       const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+
       rows.forEach(tr => {
         const ta =
           tr.querySelector('textarea[name*="comment"]') ||
@@ -540,22 +539,26 @@
 
   function injectDetailTotals() {
     if (!isDetail) return;
-    if (document.getElementById('hw24-detail-totals')) return;
 
-    const netTotalEl = document.getElementById('netTotal'); // Items Total position
+    const netTotalEl = document.getElementById('netTotal'); // <div id="netTotal">5814.34</div>
     if (!netTotalEl) return;
 
-    // Purchase Cost Sum: from line item purchase costs
-    const rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
-    let sumPC = 0;
+    // Remove old box if rerun
+    document.getElementById('hw24-detail-totals')?.remove();
 
+    const rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+
+    let sumPC = 0;
     rows.forEach(tr => {
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
-      sumPC += getPurchaseCost(tr, rn);
+      const pcUnit = getPurchaseCostPerUnit(tr, rn);
+      const qty = getQuantity(tr, rn) || 1;
+      sumPC += (pcUnit * qty);
     });
 
     const itemsTotal = toNum(netTotalEl.textContent);
-    const discountEl = document.getElementById('discountTotal_final'); // Overall Discount
+
+    const discountEl = document.getElementById('discountTotal_final'); // <span id="discountTotal_final">0.00</span>
     const overallDiscount = toNum(discountEl?.textContent);
 
     const effectiveTotal = itemsTotal - overallDiscount;
@@ -566,19 +569,21 @@
     box.id = 'hw24-detail-totals';
     box.style.cssText = 'margin-top:6px;font-weight:bold;text-align:right;font-size:12px;line-height:1.4';
     box.innerHTML = `
-      <div>Purchase Cost Sum: ${sumPC.toFixed(2)}</div>
-      <div>Margin: ${marginAbs.toFixed(2)} (${marginPct.toFixed(1)}%)</div>
+      <div>Purchase Cost Sum: ${sumPC ? sumPC.toFixed(2) : '—'}</div>
+      <div>Margin: ${sumPC ? marginAbs.toFixed(2) : '—'} ${sumPC ? `(${marginPct.toFixed(1)}%)` : ''}</div>
     `;
 
-    netTotalEl.parentElement?.appendChild(box);
+    // Safer placement: directly after netTotal element
+    netTotalEl.insertAdjacentElement('afterend', box);
   }
 
   function injectDetailMetaReloadButton() {
     if (!isDetail) return;
-    if (document.getElementById('hw24-detail-reload')) return;
 
     const tbl = document.querySelector('#lineItemTab');
     if (!tbl) return;
+
+    if (document.getElementById('hw24-detail-reload')) return;
 
     const btn = document.createElement('button');
     btn.id = 'hw24-detail-reload';
@@ -587,7 +592,6 @@
     btn.style.cssText = 'margin:8px 0;font-size:12px';
 
     btn.onclick = async () => {
-      // optional: cache beibehalten, aber Re-Render + Badge/Totals
       await processDetail();
       injectDetailTotals();
     };
@@ -621,6 +625,7 @@
       const hid =
         tr.querySelector(`input[name="hdnProductId${rn}"]`) ||
         tr.querySelector('input[name^="hdnProductId"]');
+
       if (!hid?.value) continue;
 
       const meta = await fetchMeta(`index.php?module=Products&view=Detail&record=${hid.value}`);
@@ -636,6 +641,19 @@
      CORE (DETAIL)
      =============================== */
 
+  function extractProductUrlFromRow(tr, rn) {
+    // Detail view usually has product links with record=...
+    const a =
+      tr.querySelector(`a[href*="module=Products"][href*="record="]`) ||
+      tr.querySelector(`a[href*="module=Products"][href*="view=Detail"]`);
+
+    const href = a?.getAttribute('href');
+    if (!href) return '';
+
+    // Normalize to relative link for caching
+    return href.startsWith('http') ? (new URL(href)).pathname + (new URL(href)).search : href;
+  }
+
   async function processDetail() {
     const tbl = document.querySelector('#lineItemTab');
     if (!tbl) return;
@@ -645,23 +663,19 @@
     for (const tr of rows) {
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
 
-      const hid =
-        tr.querySelector(`input[name="hdnProductId${rn}"]`) ||
-        tr.querySelector('input[name^="hdnProductId"]');
-      if (!hid?.value) continue;
+      // In detail view we often don't have hdnProductId fields.
+      const url = extractProductUrlFromRow(tr, rn);
+      if (!url) continue;
 
-      const td =
-        tr.querySelector(`#productName${rn}`)?.closest('td') ||
-        tr.querySelector('a[href*="module=Products"]')?.closest('td') ||
-        tr.querySelector('td') ;
-
+      const a = tr.querySelector(`a[href*="module=Products"][href*="record="]`);
+      const td = a?.closest('td') || tr.querySelector('td');
       if (!td) continue;
 
-      const meta = await fetchMeta(`index.php?module=Products&view=Detail&record=${hid.value}`);
+      const meta = await fetchMeta(url);
       const info = ensureInfo(td);
       renderInfo(info, meta);
 
-      // Detail View: Badge nur, wenn Description vorhanden (manchmal readonly/hidden)
+      // Auditor in detail view only if we can read a description (usually not present)
       refreshBadgeForRow(tr);
     }
   }
@@ -678,10 +692,19 @@
   }
 
   if (isDetail) {
-    // Auto-Meta im Detail View (wie gewünscht)
+    // Auto meta in detail view
     await processDetail();
     injectDetailTotals();
     injectDetailMetaReloadButton();
+
+    // Detail view pages sometimes render line items late; do a lightweight observer
+    const rerunD = debounce(async () => {
+      await processDetail();
+      injectDetailTotals();
+    }, 700);
+
+    const tbl = document.querySelector('#lineItemTab');
+    if (tbl) new MutationObserver(rerunD).observe(tbl, { childList: true, subtree: true });
   }
 
 })();
