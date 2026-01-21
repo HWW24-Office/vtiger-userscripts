@@ -33,6 +33,9 @@
 
   if (!isEdit && !isDetail) return;
 
+  const currentModule =
+    location.href.match(new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`))?.[1] || '';
+
   /* ===============================
      CONFIG
      =============================== */
@@ -90,12 +93,22 @@
       tr.querySelector(`input[name="quantity${rn}"]`) ||
       tr.querySelector(`#qty${rn}_display`) ||
       tr.querySelector(`#quantity${rn}_display`);
-
     const v = parseInt(S(q?.value ?? q?.textContent), 10);
     return Number.isFinite(v) ? v : 0;
   }
 
-  // Robust: Purchase Cost can be input (Edit) OR display span/div (Detail)
+  // Selling Price pro Stück (Unit Selling Price) — NICHT quantity-abhängig
+  function getSellingPricePerUnit(tr, rn) {
+    const el =
+      tr.querySelector(`#listPrice${rn}`) ||
+      tr.querySelector(`input[name="listPrice${rn}"]`) ||
+      tr.querySelector(`#listPrice${rn}_display`) ||
+      tr.querySelector(`span#listPrice${rn}_display`) ||
+      tr.querySelector(`div#listPrice${rn}_display`) ||
+      tr.querySelector(`[id="listPrice${rn}_display"]`);
+    return getFieldNumber(el);
+  }
+
   function getPurchaseCostPerUnit(tr, rn) {
     const el =
       tr.querySelector(`#purchaseCost${rn}`) ||
@@ -103,49 +116,20 @@
       tr.querySelector(`#purchaseCost${rn}_display`) ||
       tr.querySelector(`span#purchaseCost${rn}_display`) ||
       tr.querySelector(`div#purchaseCost${rn}_display`) ||
-      tr.querySelector(`[id="purchaseCost${rn}_display"]`) ||
-      tr.querySelector(`.purchaseCost${rn}`) ||
-      tr.querySelector(`.purchaseCost`);
-
+      tr.querySelector(`[id="purchaseCost${rn}_display"]`);
     return getFieldNumber(el);
   }
 
-  // Your example: <div id="productTotal1" class="productTotal">1562.50</div>
   function getLineItemTotal(tr, rn) {
     const el =
       tr.querySelector(`#productTotal${rn}`) ||
-      tr.querySelector(`div#productTotal${rn}`) ||
-      tr.querySelector(`#productTotal${rn}_display`) ||
       tr.querySelector(`#netPrice${rn}`) ||
-      tr.querySelector(`#netPrice${rn}_display`);
-
+      tr.querySelector(`#productTotal${rn}_display`);
     return getFieldNumber(el);
   }
 
   /* ===============================
-     MARKUP (Total / (PC per unit * Qty))
-     =============================== */
-
-  function calcMarkupFromProduct(tr, rn, meta) {
-    const totalEl =
-      tr.querySelector(`#productTotal${rn}`) ||
-      tr.querySelector(`#netPrice${rn}`) ||
-      tr.querySelector(`#productTotal${rn}_display`);
-  
-    const total = parseFloat(
-      (totalEl?.textContent || totalEl?.value || '').replace(',', '.')
-    );
-  
-    const pc = parseFloat(meta?.purchaseCost || 0);
-  
-    if (!total || !pc) return null;
-  
-    return (total / pc).toFixed(2);
-  }
-
-
-  /* ===============================
-     META FETCH
+     META FETCH (extended with Product Purchase Cost)
      =============================== */
 
   async function fetchMeta(url) {
@@ -167,23 +151,40 @@
 
       const productNo = S(dp.querySelector('.product_no.value')?.textContent);
 
+      // Produkt-Purchase-Cost kann je nach Sprache/Label variieren → mehrere Kandidaten
+      const pcRaw =
+        getVal('purchase cost') ||
+        getVal('purchasecost') ||
+        getVal('einkauf') ||
+        getVal('ek');
+
       const meta = {
         pn: productNo,
         vendor: getVal('vendor'),
         sla: getVal('sla'),
         duration: getVal('duration'),
         country: getVal('country'),
-        purchaseCost: parseFloat(
-          (getVal('purchase cost') || '').replace(',', '.')
-        ) || 0
+        purchaseCost: toNum(pcRaw) // ✅ Produktseite EK pro Stück
       };
-      
 
       mem.set(url, meta);
       return meta;
     } catch {
       return {};
     }
+  }
+
+  /* ===============================
+     MARKUP (FIXED)
+     Markup = Selling Price (pro Stück) / Product Purchase Cost (pro Stück)
+     =============================== */
+
+  function calcMarkup(tr, rn, meta) {
+    const sellingPerUnit = getSellingPricePerUnit(tr, rn);   // ✅ pro Stück
+    const pcProduct = toNum(meta?.purchaseCost || 0);         // ✅ pro Stück (Produktseite)
+
+    if (!sellingPerUnit || !pcProduct) return null;
+    return (sellingPerUnit / pcProduct).toFixed(2);
   }
 
   /* ===============================
@@ -307,7 +308,7 @@
   }
 
   /* ===============================
-     STANDARDIZER + FIXERS
+     DESCRIPTION STANDARDIZER
      =============================== */
 
   function normalizeDescriptionLanguage(text, lang) {
@@ -390,7 +391,7 @@
     actions.onclick = e => {
       if (e.target.id === 'apply') {
         textarea.value = prevTA.value;
-        refreshBadgeForRow(tr, {});
+        refreshBadgeForRow(tr);
       }
       overlay.remove();
     };
@@ -432,11 +433,9 @@
       tr.querySelector('textarea[name*="comment"]')?.value ||
       tr.querySelector(`#comment${rn}`)?.value ||
       '';
-
     const qty = getQuantity(tr, rn);
     const info = tr.querySelector('.vt-prodinfo');
     if (!info) return;
-
     const auditor = ensureAuditor(info);
     auditor.textContent = auditMaintenance(desc, qty);
   }
@@ -444,8 +443,7 @@
   function renderInfo(info, meta) {
     const tr = info.closest('tr');
     const rn = tr?.getAttribute('data-row-num') || tr?.id?.replace('row', '') || '';
-    const markup = calcMarkupFromProduct(tr, rn, meta);
-    ;
+    const markup = tr ? calcMarkup(tr, rn, meta) : null;
 
     info.innerHTML = `
       <span style="
@@ -517,8 +515,8 @@
     btn.onclick = () => {
       const tbl = document.querySelector('#lineItemTab');
       if (!tbl) return;
-      const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
 
+      const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
       rows.forEach(tr => {
         const ta =
           tr.querySelector('textarea[name*="comment"]') ||
@@ -539,26 +537,24 @@
 
   function injectDetailTotals() {
     if (!isDetail) return;
+    if (document.getElementById('hw24-detail-totals')) return;
 
-    const netTotalEl = document.getElementById('netTotal'); // <div id="netTotal">5814.34</div>
+    const netTotalEl = document.getElementById('netTotal'); // Items Total position
     if (!netTotalEl) return;
 
-    // Remove old box if rerun
-    document.getElementById('hw24-detail-totals')?.remove();
-
     const rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
-
     let sumPC = 0;
+
     rows.forEach(tr => {
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
-      const pcUnit = getPurchaseCostPerUnit(tr, rn);
-      const qty = getQuantity(tr, rn) || 1;
-      sumPC += (pcUnit * qty);
+      const qty = getQuantity(tr, rn) || 0;
+      const pc = getPurchaseCostPerUnit(tr, rn);
+      // je nach VTiger ist purchaseCost pro unit oder total — wir summieren konservativ pc*qty
+      sumPC += pc * (qty || 1);
     });
 
     const itemsTotal = toNum(netTotalEl.textContent);
-
-    const discountEl = document.getElementById('discountTotal_final'); // <span id="discountTotal_final">0.00</span>
+    const discountEl = document.getElementById('discountTotal_final');
     const overallDiscount = toNum(discountEl?.textContent);
 
     const effectiveTotal = itemsTotal - overallDiscount;
@@ -573,17 +569,15 @@
       <div>Margin: ${sumPC ? marginAbs.toFixed(2) : '—'} ${sumPC ? `(${marginPct.toFixed(1)}%)` : ''}</div>
     `;
 
-    // Safer placement: directly after netTotal element
-    netTotalEl.insertAdjacentElement('afterend', box);
+    netTotalEl.parentElement?.appendChild(box);
   }
 
   function injectDetailMetaReloadButton() {
     if (!isDetail) return;
+    if (document.getElementById('hw24-detail-reload')) return;
 
     const tbl = document.querySelector('#lineItemTab');
     if (!tbl) return;
-
-    if (document.getElementById('hw24-detail-reload')) return;
 
     const btn = document.createElement('button');
     btn.id = 'hw24-detail-reload';
@@ -593,6 +587,8 @@
 
     btn.onclick = async () => {
       await processDetail();
+      // Totals ggf. neu berechnen
+      document.getElementById('hw24-detail-totals')?.remove();
       injectDetailTotals();
     };
 
@@ -625,7 +621,6 @@
       const hid =
         tr.querySelector(`input[name="hdnProductId${rn}"]`) ||
         tr.querySelector('input[name^="hdnProductId"]');
-
       if (!hid?.value) continue;
 
       const meta = await fetchMeta(`index.php?module=Products&view=Detail&record=${hid.value}`);
@@ -641,8 +636,7 @@
      CORE (DETAIL)
      =============================== */
 
-  function extractProductUrlFromRow(tr, rn) {
-    // Detail view usually has product links with record=...
+  function extractProductUrlFromRow(tr) {
     const a =
       tr.querySelector(`a[href*="module=Products"][href*="record="]`) ||
       tr.querySelector(`a[href*="module=Products"][href*="view=Detail"]`);
@@ -650,8 +644,11 @@
     const href = a?.getAttribute('href');
     if (!href) return '';
 
-    // Normalize to relative link for caching
-    return href.startsWith('http') ? (new URL(href)).pathname + (new URL(href)).search : href;
+    const u = new URL(href, location.origin);
+    const rec = u.searchParams.get('record');
+    if (!rec) return '';
+
+    return `index.php?module=Products&view=Detail&record=${rec}`;
   }
 
   async function processDetail() {
@@ -663,19 +660,18 @@
     for (const tr of rows) {
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
 
-      // In detail view we often don't have hdnProductId fields.
-      const url = extractProductUrlFromRow(tr, rn);
+      const url = extractProductUrlFromRow(tr);
       if (!url) continue;
 
       const a = tr.querySelector(`a[href*="module=Products"][href*="record="]`);
-      const td = a?.closest('td') || tr.querySelector('td');
+      const td = a?.closest('td');
       if (!td) continue;
 
       const meta = await fetchMeta(url);
       const info = ensureInfo(td);
       renderInfo(info, meta);
 
-      // Auditor in detail view only if we can read a description (usually not present)
+      // Badge (falls description irgendwo vorhanden ist)
       refreshBadgeForRow(tr);
     }
   }
@@ -692,14 +688,13 @@
   }
 
   if (isDetail) {
-    // Auto meta in detail view
     await processDetail();
     injectDetailTotals();
     injectDetailMetaReloadButton();
 
-    // Detail view pages sometimes render line items late; do a lightweight observer
     const rerunD = debounce(async () => {
       await processDetail();
+      document.getElementById('hw24-detail-totals')?.remove();
       injectDetailTotals();
     }, 700);
 
