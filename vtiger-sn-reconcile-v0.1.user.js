@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      0.7.6-meta
-// @description  Add dialog uses live product meta (neutral, no vendor) via product detail fetch
+// @version      1.0.0
+// @description  Serial number reconciliation with modern UI - add, remove, reassign SNs across line items
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -24,22 +24,22 @@
      ============================= */
   const $ = id => document.getElementById(id);
   const S = s => (s || '').toString().trim();
-  const norm = s => S(s).toUpperCase().replace(/\s+/g,'');
+  const norm = s => S(s).toUpperCase().replace(/\s+/g, '');
   const uniq = a => [...new Set(a)];
   const parseList = t =>
     uniq(S(t).split(/[\n,;]+/).map(norm).filter(Boolean));
   const fire = el =>
-    el && ['input','change','blur'].forEach(e =>
-      el.dispatchEvent(new Event(e,{bubbles:true}))
+    el && ['input', 'change', 'blur'].forEach(e =>
+      el.dispatchEvent(new Event(e, { bubbles: true }))
     );
 
   /* =============================
-     META FETCH (REUSED, NEUTRAL)
+     META FETCH
      ============================= */
 
-  const metaCache = new Map(); // page-load only
+  const metaCache = new Map();
 
-  async function fetchProductMeta(productId){
+  async function fetchProductMeta(productId) {
     if (!productId) return {};
     if (metaCache.has(productId)) return metaCache.get(productId);
 
@@ -53,12 +53,15 @@
         const lab = [...dp.querySelectorAll('[id^="Products_detailView_fieldLabel_"]')]
           .find(l => S(l.textContent).toLowerCase().includes(label));
         if (!lab) return '';
-        const v = dp.getElementById(lab.id.replace('fieldLabel','fieldValue'));
+        const v = dp.getElementById(lab.id.replace('fieldLabel', 'fieldValue'));
         return S(v ? v.textContent : '');
       };
 
+      const productNo = S(dp.querySelector('.product_no.value')?.textContent);
+
       const meta = {
-        productName: getVal('product'),
+        productName: getVal('product name') || getVal('produktname') || getVal('product'),
+        productNo: productNo,
         sla: getVal('sla'),
         duration: getVal('duration'),
         country: getVal('country')
@@ -75,21 +78,21 @@
      Runtime from description
      ============================= */
 
-  function extractRuntime(desc){
+  function extractRuntime(desc) {
     const s = desc.match(/Service Start\s*:\s*([0-9.\-]+)/i);
-    const e = desc.match(/Service Ende\s*:\s*([0-9.\-]+)/i);
+    const e = desc.match(/Service Ende?\s*:\s*([0-9.\-]+)/i);
     if (s && e) return `${s[1]} → ${e[1]}`;
-    return '-';
+    return '—';
   }
 
   /* =============================
      Line Items
      ============================= */
 
-  function getLineItems(){
+  function getLineItems() {
     return [...document.querySelectorAll('tr.lineItemRow[id^="row"], tr.inventoryRow')]
-      .map(tr=>{
-        const rn = tr.getAttribute('data-row-num') || tr.id.replace('row','');
+      .map(tr => {
+        const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
 
         const descEl =
           tr.querySelector('textarea[name*="comment"], textarea[name*="description"]');
@@ -104,6 +107,12 @@
           tr.querySelector('input[name^="hdnProductId"]')?.value ||
           '';
 
+        // Produktname aus dem DOM holen
+        const nameEl = tr.querySelector(`#productName${rn}`) ||
+          tr.querySelector('input[id^="productName"]') ||
+          tr.querySelector('a[href*="module=Products"]');
+        const productName = nameEl?.value || nameEl?.textContent || '';
+
         return {
           rn,
           tr,
@@ -112,270 +121,770 @@
           desc,
           sns,
           productId,
+          productName: S(productName),
           runtime: extractRuntime(desc),
           meta: null
         };
       });
   }
 
-  function buildSNIndex(items){
-    const idx = new Map();
-    items.forEach(it=>{
-      it.sns.forEach(sn=>{
-        if(!idx.has(sn)) idx.set(sn,[]);
-        idx.get(sn).push(it);
-      });
-    });
-    return idx;
-  }
-
   /* =============================
-     PANEL (stable)
+     STYLES
      ============================= */
 
-  function injectPanel(){
+  const STYLES = `
+    #hw24-sn-toggle {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      color: #fff;
+      border: none;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+      cursor: pointer;
+      font-size: 20px;
+      z-index: 2147483646;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    #hw24-sn-toggle:hover {
+      transform: scale(1.1);
+      box-shadow: 0 6px 16px rgba(59, 130, 246, 0.5);
+    }
+
+    #hw24-sn-panel {
+      position: fixed;
+      bottom: 80px;
+      left: 20px;
+      width: 420px;
+      max-height: calc(100vh - 120px);
+      background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+      z-index: 2147483647;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      overflow: hidden;
+      display: none;
+    }
+    #hw24-sn-panel.visible {
+      display: block;
+    }
+
+    #hw24-sn-panel .panel-header {
+      background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+      color: #fff;
+      padding: 12px 16px;
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #hw24-sn-panel .panel-header button {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 18px;
+      padding: 0;
+      line-height: 1;
+    }
+    #hw24-sn-panel .panel-header button:hover {
+      color: #fff;
+    }
+
+    #hw24-sn-panel .panel-body {
+      padding: 16px;
+      max-height: calc(100vh - 200px);
+      overflow-y: auto;
+    }
+
+    #hw24-sn-panel .section {
+      margin-bottom: 16px;
+    }
+    #hw24-sn-panel .section-title {
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #hw24-sn-panel .section-title .count {
+      background: #3b82f6;
+      color: #fff;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+
+    #hw24-sn-panel .line-item {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+    #hw24-sn-panel .line-item-header {
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+    #hw24-sn-panel .line-item-meta {
+      font-size: 11px;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+    #hw24-sn-panel .sn-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    #hw24-sn-panel .sn-tag {
+      background: #dbeafe;
+      color: #1e40af;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: monospace;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    #hw24-sn-panel .sn-tag.to-remove {
+      background: #fee2e2;
+      color: #991b1b;
+      text-decoration: line-through;
+    }
+    #hw24-sn-panel .sn-tag .remove-btn {
+      cursor: pointer;
+      opacity: 0.6;
+      font-size: 12px;
+    }
+    #hw24-sn-panel .sn-tag .remove-btn:hover {
+      opacity: 1;
+    }
+
+    #hw24-sn-panel textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: monospace;
+      resize: vertical;
+      min-height: 60px;
+    }
+    #hw24-sn-panel textarea:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    #hw24-sn-panel .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    #hw24-sn-panel .btn {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #hw24-sn-panel .btn-primary {
+      background: #3b82f6;
+      color: #fff;
+    }
+    #hw24-sn-panel .btn-primary:hover {
+      background: #2563eb;
+    }
+    #hw24-sn-panel .btn-secondary {
+      background: #e2e8f0;
+      color: #475569;
+    }
+    #hw24-sn-panel .btn-secondary:hover {
+      background: #cbd5e1;
+    }
+    #hw24-sn-panel .btn-danger {
+      background: #ef4444;
+      color: #fff;
+    }
+    #hw24-sn-panel .btn-danger:hover {
+      background: #dc2626;
+    }
+    #hw24-sn-panel .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #hw24-sn-panel .status-msg {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    #hw24-sn-panel .status-msg.success {
+      background: #dcfce7;
+      color: #166534;
+    }
+    #hw24-sn-panel .status-msg.warning {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    #hw24-sn-panel .status-msg.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    /* Add Dialog */
+    #hw24-sn-dialog {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 2147483648;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #hw24-sn-dialog .dialog-box {
+      background: #fff;
+      width: 90%;
+      max-width: 800px;
+      max-height: 80vh;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+    }
+    #hw24-sn-dialog .dialog-header {
+      background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+      color: #fff;
+      padding: 16px 20px;
+      font-weight: 600;
+      font-size: 15px;
+    }
+    #hw24-sn-dialog .dialog-body {
+      padding: 20px;
+      max-height: calc(80vh - 120px);
+      overflow-y: auto;
+    }
+    #hw24-sn-dialog .dialog-footer {
+      padding: 12px 20px;
+      background: #f8fafc;
+      border-top: 1px solid #e2e8f0;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    #hw24-sn-dialog .sn-checkbox-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    #hw24-sn-dialog .sn-checkbox {
+      background: #f1f5f9;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 12px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    #hw24-sn-dialog .sn-checkbox:hover {
+      background: #e2e8f0;
+    }
+    #hw24-sn-dialog .sn-checkbox.selected {
+      background: #dbeafe;
+      border-color: #3b82f6;
+    }
+
+    #hw24-sn-dialog .target-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    #hw24-sn-dialog .target-item {
+      background: #f8fafc;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #hw24-sn-dialog .target-item:hover {
+      border-color: #94a3b8;
+    }
+    #hw24-sn-dialog .target-item.selected {
+      border-color: #3b82f6;
+      background: #eff6ff;
+    }
+    #hw24-sn-dialog .target-item-name {
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 4px;
+    }
+    #hw24-sn-dialog .target-item-meta {
+      font-size: 11px;
+      color: #64748b;
+    }
+  `;
+
+  /* =============================
+     STATE
+     ============================= */
+
+  let panelVisible = false;
+  let toRemove = new Set(); // SNs marked for removal
+  let SNAPSHOT = null;
+
+  /* =============================
+     INJECT STYLES & UI
+     ============================= */
+
+  function injectStyles() {
+    if ($('hw24-sn-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'hw24-sn-styles';
+    style.textContent = STYLES;
+    document.head.appendChild(style);
+  }
+
+  function injectToggleButton() {
+    if ($('hw24-sn-toggle')) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'hw24-sn-toggle';
+    btn.innerHTML = '🔢';
+    btn.title = 'SN-Abgleich öffnen';
+    btn.onclick = togglePanel;
+    document.body.appendChild(btn);
+  }
+
+  function injectPanel() {
     if ($('hw24-sn-panel')) return;
 
-    const p = document.createElement('div');
-    p.id = 'hw24-sn-panel';
-    p.style.cssText = `
-      position:fixed; bottom:20px; left:20px;
-      width:360px; padding:12px;
-      background:#111; color:#fff;
-      border:1px solid #333; border-radius:10px;
-      box-shadow:0 8px 24px rgba(0,0,0,.5);
-      z-index:2147483647;
-      font-family:system-ui,Segoe UI,Roboto,Arial;
-      font-size:13px;
-    `;
-
-    p.innerHTML = `
-      <b style="display:block;margin-bottom:6px">SN-Abgleich</b>
-
-      <label>Behalten</label>
-      <textarea id="sn-keep" style="width:100%;height:46px;margin-bottom:6px"></textarea>
-
-      <label>Entfernen</label>
-      <textarea id="sn-remove" style="width:100%;height:46px;margin-bottom:6px"></textarea>
-
-      <label>Hinzufügen</label>
-      <textarea id="sn-add" style="width:100%;height:46px"></textarea>
-
-      <div style="margin-top:8px;display:flex;gap:6px">
-        <button id="sn-preview">Preview</button>
-        <button id="sn-apply">Apply</button>
-        <button id="sn-undo" disabled>Undo</button>
+    const panel = document.createElement('div');
+    panel.id = 'hw24-sn-panel';
+    panel.innerHTML = `
+      <div class="panel-header">
+        <span>🔢 SN-Abgleich</span>
+        <button id="hw24-sn-close" title="Schließen">✕</button>
       </div>
+      <div class="panel-body">
+        <div id="hw24-sn-overview" class="section"></div>
 
-      <div id="sn-msg" style="margin-top:6px;color:#ffd966;font-size:12px"></div>
+        <div class="section">
+          <div class="section-title">Neue SNs hinzufügen</div>
+          <textarea id="hw24-sn-add" placeholder="Seriennummern eingeben (eine pro Zeile oder durch Komma getrennt)"></textarea>
+        </div>
+
+        <div class="btn-row">
+          <button id="hw24-sn-refresh" class="btn btn-secondary">🔄 Refresh</button>
+          <button id="hw24-sn-apply" class="btn btn-primary">✓ Apply</button>
+          <button id="hw24-sn-undo" class="btn btn-secondary" disabled>↩ Undo</button>
+        </div>
+
+        <div id="hw24-sn-status"></div>
+      </div>
     `;
 
-    p.querySelectorAll('textarea,button').forEach(el=>{
-      el.style.background='#fff';
-      el.style.color='#111';
-      el.style.border='1px solid #444';
-    });
+    document.body.appendChild(panel);
 
-    document.body.appendChild(p);
+    // Event listeners
+    $('hw24-sn-close').onclick = () => togglePanel(false);
+    $('hw24-sn-refresh').onclick = refreshOverview;
+    $('hw24-sn-apply').onclick = applyChanges;
+    $('hw24-sn-undo').onclick = undoChanges;
   }
 
-  function initPanel(){
-    injectPanel();
-    const obs = new MutationObserver(()=>{
-      if (!$('hw24-sn-panel')) injectPanel();
-    });
-    obs.observe(document.body,{childList:true,subtree:true});
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initPanel);
-  } else {
-    initPanel();
+  function togglePanel(forceState) {
+    panelVisible = typeof forceState === 'boolean' ? forceState : !panelVisible;
+    const panel = $('hw24-sn-panel');
+    if (panel) {
+      panel.classList.toggle('visible', panelVisible);
+      if (panelVisible) {
+        toRemove.clear();
+        refreshOverview();
+      }
+    }
   }
 
   /* =============================
-     Preview
+     OVERVIEW RENDERING
      ============================= */
 
-  $('sn-preview').onclick = ()=>{
+  async function refreshOverview() {
+    const container = $('hw24-sn-overview');
+    if (!container) return;
+
+    container.innerHTML = '<div style="color:#64748b;padding:10px;">Lade...</div>';
+
     const items = getLineItems();
-    const idx = buildSNIndex(items);
+    let totalSNs = 0;
 
-    const keep = parseList($('sn-keep').value);
-    const rem  = parseList($('sn-remove').value);
-    const add  = parseList($('sn-add').value);
-
-    const msg = [];
-
-    if (keep.some(sn=>rem.includes(sn)))
-      msg.push('❌ Konflikt Behalten / Entfernen');
-
-    if (keep.some(sn=>!idx.has(sn)))
-      msg.push('⚠ Behalten: Produkt fehlt');
-
-    if (add.some(sn=>idx.has(sn)))
-      msg.push('🚫 Hinzufügen: bereits vorhanden');
-
-    $('sn-msg').textContent = msg.length ? msg.join(' | ') : '✅ Preview OK';
-  };
-
-  /* =============================
-     Add Dialog (with live meta)
-     ============================= */
-
-  async function openAddDialog(addList, items, onDone){
-    let remaining = [...addList];
-
+    // Fetch meta for all items
     for (const it of items) {
       if (!it.meta && it.productId) {
         it.meta = await fetchProductMeta(it.productId);
       }
+      totalSNs += it.sns.length;
     }
 
-    const dlg = document.createElement('div');
-    dlg.style.cssText = `
-      position:fixed; inset:0;
-      background:rgba(0,0,0,.6);
-      z-index:2147483647;
-      display:flex; align-items:center; justify-content:center;
+    container.innerHTML = `
+      <div class="section-title">
+        Aktuelle Seriennummern
+        <span class="count">${totalSNs}</span>
+      </div>
     `;
 
-    const box = document.createElement('div');
-    box.style.cssText = `
-      background:#fff; color:#111;
-      width:90%; max-width:1000px;
-      max-height:80vh; overflow:auto;
-      padding:16px; border-radius:10px;
-      font-family:system-ui,Segoe UI,Roboto,Arial;
-    `;
+    if (items.length === 0) {
+      container.innerHTML += '<div style="color:#64748b;font-size:12px;">Keine Line Items gefunden.</div>';
+      return;
+    }
 
-    function render(){
-      box.innerHTML = `<h3>Seriennummern zuordnen</h3>`;
+    items.forEach(it => {
+      const meta = it.meta || {};
+      const displayName = meta.productName || it.productName || `Position ${it.rn}`;
 
-      if(!remaining.length){
-        const close = document.createElement('button');
-        close.textContent = 'Schließen';
-        close.onclick = ()=>{ dlg.remove(); onDone(); };
-        box.appendChild(close);
-        return;
+      const div = document.createElement('div');
+      div.className = 'line-item';
+      div.innerHTML = `
+        <div class="line-item-header">${displayName}</div>
+        <div class="line-item-meta">
+          ${meta.sla ? `SLA: ${meta.sla} • ` : ''}
+          ${meta.duration ? `Duration: ${meta.duration} • ` : ''}
+          Laufzeit: ${it.runtime}
+          ${it.sns.length ? ` • Qty: ${it.sns.length}` : ''}
+        </div>
+        <div class="sn-list" data-rn="${it.rn}"></div>
+      `;
+
+      const snList = div.querySelector('.sn-list');
+      if (it.sns.length === 0) {
+        snList.innerHTML = '<span style="color:#94a3b8;font-size:11px;">Keine SNs</span>';
+      } else {
+        it.sns.forEach(sn => {
+          const tag = document.createElement('span');
+          tag.className = 'sn-tag' + (toRemove.has(sn) ? ' to-remove' : '');
+          tag.innerHTML = `
+            ${sn}
+            <span class="remove-btn" data-sn="${sn}" title="Zum Entfernen markieren">✕</span>
+          `;
+          tag.querySelector('.remove-btn').onclick = (e) => {
+            e.stopPropagation();
+            toggleRemove(sn);
+          };
+          snList.appendChild(tag);
+        });
       }
 
-      const snWrap = document.createElement('div');
-      snWrap.innerHTML = '<b>Seriennummern</b>';
-      remaining.forEach(sn=>{
-        const d = document.createElement('div');
-        d.innerHTML = `<label><input type="checkbox" value="${sn}"> ${sn}</label>`;
-        snWrap.appendChild(d);
-      });
+      container.appendChild(div);
+    });
+  }
 
-      const prodWrap = document.createElement('div');
-      prodWrap.innerHTML = '<b>Position</b>';
+  function toggleRemove(sn) {
+    if (toRemove.has(sn)) {
+      toRemove.delete(sn);
+    } else {
+      toRemove.add(sn);
+    }
+    // Update UI
+    document.querySelectorAll(`[data-sn="${sn}"]`).forEach(btn => {
+      btn.closest('.sn-tag')?.classList.toggle('to-remove', toRemove.has(sn));
+    });
+    updateStatus();
+  }
 
-      items.forEach(it=>{
-        const m = it.meta || {};
-        const d = document.createElement('div');
-        d.style.cssText = 'border:1px solid #ccc;border-radius:6px;padding:6px;margin:6px 0';
-        d.innerHTML = `
-          <label>
-            <input type="radio" name="hw24-sn-target" value="${it.rn}">
-            <b>${m.productName || '—'}</b>
-          </label>
-          <div style="font-size:12px;margin-top:4px">
-            SLA: ${m.sla || '—'}
-            • Duration: ${m.duration || '—'}
-            • Country: ${m.country || '—'}
-            • Laufzeit: ${it.runtime}
-          </div>
-        `;
-        prodWrap.appendChild(d);
-      });
+  function updateStatus() {
+    const status = $('hw24-sn-status');
+    if (!status) return;
 
-      const assign = document.createElement('button');
-      assign.textContent = 'Ausgewählte Seriennummern zuordnen';
-      assign.onclick = ()=>{
-        const sns = [...snWrap.querySelectorAll('input[type=checkbox]:checked')]
-          .map(i=>i.value);
-        const sel = prodWrap.querySelector('input[type=radio]:checked');
-        if(!sns.length || !sel)
-          return alert('Bitte Seriennummer(n) UND Position wählen');
+    const addText = S($('hw24-sn-add')?.value);
+    const addCount = addText ? parseList(addText).length : 0;
 
-        const it = items.find(x=>x.rn === sel.value);
-        sns.forEach(sn=>{
-          if(!it.sns.includes(sn)) it.sns.push(sn);
-          remaining = remaining.filter(x=>x!==sn);
-        });
-        render();
-      };
-
-      box.append(snWrap, prodWrap, assign);
+    if (toRemove.size === 0 && addCount === 0) {
+      status.innerHTML = '';
+      return;
     }
 
-    render();
-    dlg.appendChild(box);
-    document.body.appendChild(dlg);
+    let msg = [];
+    if (toRemove.size > 0) {
+      msg.push(`${toRemove.size} SN(s) zum Entfernen markiert`);
+    }
+    if (addCount > 0) {
+      msg.push(`${addCount} neue SN(s) zum Hinzufügen`);
+    }
+
+    status.innerHTML = `<div class="status-msg warning">${msg.join(' • ')}</div>`;
   }
 
   /* =============================
-     Apply
+     APPLY CHANGES
      ============================= */
 
-  let SNAPSHOT = null;
-
-  const snapshot = items => items.map(it=>({
-    rn: it.rn,
-    desc: it.descEl?.value,
-    qty: it.qtyEl?.value
-  }));
-
-  const restore = snap => snap.forEach(s=>{
-    const tr = document.getElementById('row'+s.rn) ||
-      document.querySelector(`tr[data-row-num="${s.rn}"]`);
-    if(!tr) return;
-    const d = tr.querySelector('textarea[name*="comment"], textarea[name*="description"]');
-    const q = tr.querySelector('input[name^="qty"]');
-    if(d){ d.value=s.desc; fire(d); }
-    if(q){ q.value=s.qty; fire(q); }
-  });
-
-  $('sn-apply').onclick = async ()=>{
+  async function applyChanges() {
     const items = getLineItems();
-    SNAPSHOT = snapshot(items);
-    $('sn-undo').disabled = false;
 
-    const idx = buildSNIndex(items);
-    const keep = new Set(parseList($('sn-keep').value));
-    const rem  = parseList($('sn-remove').value).filter(sn=>!keep.has(sn));
-    const add  = parseList($('sn-add').value)
-      .filter(sn=>!keep.has(sn) && !idx.has(sn));
+    // Create snapshot for undo
+    SNAPSHOT = items.map(it => ({
+      rn: it.rn,
+      desc: it.descEl?.value,
+      qty: it.qtyEl?.value
+    }));
+    $('hw24-sn-undo').disabled = false;
 
-    items.forEach(it=>{
-      it.sns = it.sns.filter(sn=>!rem.includes(sn));
+    // Get new SNs to add
+    const addText = S($('hw24-sn-add')?.value);
+    const addSNs = addText ? parseList(addText) : [];
+
+    // Build index of existing SNs
+    const existingIndex = new Map();
+    items.forEach(it => {
+      it.sns.forEach(sn => {
+        if (!existingIndex.has(sn)) existingIndex.set(sn, []);
+        existingIndex.get(sn).push(it);
+      });
     });
 
-    const writeBack = ()=>{
-      items.forEach(it=>{
+    // Filter out SNs that already exist
+    const newSNs = addSNs.filter(sn => !existingIndex.has(sn));
+
+    // Remove marked SNs
+    items.forEach(it => {
+      it.sns = it.sns.filter(sn => !toRemove.has(sn));
+    });
+
+    // Function to write back changes
+    const writeBack = () => {
+      items.forEach(it => {
+        if (!it.descEl) return;
+
         const snLine = it.sns.length ? `S/N: ${it.sns.join(', ')}` : '';
-        const rest = it.desc.replace(/S\/N\s*:[^\n\r]+/i,'').trim();
+        const rest = it.desc.replace(/S\/N\s*:[^\n\r]+/i, '').trim();
         it.descEl.value = [snLine, rest].filter(Boolean).join('\n');
         fire(it.descEl);
-        if(it.qtyEl){
+
+        if (it.qtyEl && it.sns.length > 0) {
           it.qtyEl.value = it.sns.length;
           fire(it.qtyEl);
         }
       });
-      $('sn-msg').textContent = 'Apply durchgeführt';
+
+      // Clear inputs and state
+      toRemove.clear();
+      if ($('hw24-sn-add')) $('hw24-sn-add').value = '';
+
+      showStatus('success', '✓ Änderungen angewendet');
+      refreshOverview();
     };
 
-    if(add.length){
-      await openAddDialog(add, items, writeBack);
+    // If there are new SNs to add, open dialog
+    if (newSNs.length > 0) {
+      // Fetch meta for dialog
+      for (const it of items) {
+        if (!it.meta && it.productId) {
+          it.meta = await fetchProductMeta(it.productId);
+        }
+      }
+      openAddDialog(newSNs, items, writeBack);
     } else {
       writeBack();
     }
-  };
+  }
 
-  $('sn-undo').onclick = ()=>{
-    if(SNAPSHOT) restore(SNAPSHOT);
-    $('sn-msg').textContent = 'Undo durchgeführt';
-  };
+  function undoChanges() {
+    if (!SNAPSHOT) return;
+
+    SNAPSHOT.forEach(s => {
+      const tr = document.getElementById('row' + s.rn) ||
+        document.querySelector(`tr[data-row-num="${s.rn}"]`);
+      if (!tr) return;
+
+      const d = tr.querySelector('textarea[name*="comment"], textarea[name*="description"]');
+      const q = tr.querySelector('input[name^="qty"]');
+
+      if (d) { d.value = s.desc; fire(d); }
+      if (q) { q.value = s.qty; fire(q); }
+    });
+
+    toRemove.clear();
+    showStatus('success', '↩ Undo durchgeführt');
+    refreshOverview();
+  }
+
+  function showStatus(type, message) {
+    const status = $('hw24-sn-status');
+    if (status) {
+      status.innerHTML = `<div class="status-msg ${type}">${message}</div>`;
+      setTimeout(() => { status.innerHTML = ''; }, 3000);
+    }
+  }
+
+  /* =============================
+     ADD DIALOG
+     ============================= */
+
+  function openAddDialog(snList, items, onDone) {
+    // Remove existing dialog
+    $('hw24-sn-dialog')?.remove();
+
+    let remaining = [...snList];
+    let selectedSNs = new Set();
+    let selectedTarget = null;
+
+    const dialog = document.createElement('div');
+    dialog.id = 'hw24-sn-dialog';
+
+    function render() {
+      dialog.innerHTML = `
+        <div class="dialog-box">
+          <div class="dialog-header">
+            Neue Seriennummern zuordnen
+            ${remaining.length > 0 ? `(${remaining.length} übrig)` : ''}
+          </div>
+          <div class="dialog-body">
+            ${remaining.length === 0 ? `
+              <div style="text-align:center;padding:20px;color:#16a34a;">
+                <div style="font-size:32px;margin-bottom:8px;">✓</div>
+                <div>Alle Seriennummern wurden zugeordnet!</div>
+              </div>
+            ` : `
+              <div style="margin-bottom:16px;">
+                <div style="font-weight:600;margin-bottom:8px;">1. Seriennummern auswählen:</div>
+                <div class="sn-checkbox-list">
+                  ${remaining.map(sn => `
+                    <div class="sn-checkbox${selectedSNs.has(sn) ? ' selected' : ''}" data-sn="${sn}">
+                      ${sn}
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+
+              <div>
+                <div style="font-weight:600;margin-bottom:8px;">2. Ziel-Position auswählen:</div>
+                <div class="target-list">
+                  ${items.map(it => {
+                    const meta = it.meta || {};
+                    const displayName = meta.productName || it.productName || `Position ${it.rn}`;
+                    return `
+                      <div class="target-item${selectedTarget === it.rn ? ' selected' : ''}" data-rn="${it.rn}">
+                        <div class="target-item-name">${displayName}</div>
+                        <div class="target-item-meta">
+                          ${meta.sla ? `SLA: ${meta.sla} • ` : ''}
+                          ${meta.duration ? `Duration: ${meta.duration} • ` : ''}
+                          Laufzeit: ${it.runtime}
+                          ${it.sns.length ? ` • Aktuelle SNs: ${it.sns.length}` : ''}
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            `}
+          </div>
+          <div class="dialog-footer">
+            ${remaining.length > 0 ? `
+              <button class="btn btn-secondary" id="hw24-dlg-cancel">Abbrechen</button>
+              <button class="btn btn-primary" id="hw24-dlg-assign" ${selectedSNs.size === 0 || !selectedTarget ? 'disabled' : ''}>
+                Zuordnen (${selectedSNs.size})
+              </button>
+            ` : `
+              <button class="btn btn-primary" id="hw24-dlg-close">Schließen</button>
+            `}
+          </div>
+        </div>
+      `;
+
+      // Event listeners
+      dialog.querySelectorAll('.sn-checkbox').forEach(el => {
+        el.onclick = () => {
+          const sn = el.dataset.sn;
+          if (selectedSNs.has(sn)) {
+            selectedSNs.delete(sn);
+          } else {
+            selectedSNs.add(sn);
+          }
+          render();
+        };
+      });
+
+      dialog.querySelectorAll('.target-item').forEach(el => {
+        el.onclick = () => {
+          selectedTarget = el.dataset.rn;
+          render();
+        };
+      });
+
+      const assignBtn = dialog.querySelector('#hw24-dlg-assign');
+      if (assignBtn) {
+        assignBtn.onclick = () => {
+          const targetItem = items.find(it => it.rn === selectedTarget);
+          if (targetItem && selectedSNs.size > 0) {
+            selectedSNs.forEach(sn => {
+              if (!targetItem.sns.includes(sn)) {
+                targetItem.sns.push(sn);
+              }
+              remaining = remaining.filter(x => x !== sn);
+            });
+            selectedSNs.clear();
+            selectedTarget = null;
+            render();
+          }
+        };
+      }
+
+      const cancelBtn = dialog.querySelector('#hw24-dlg-cancel');
+      if (cancelBtn) {
+        cancelBtn.onclick = () => {
+          dialog.remove();
+        };
+      }
+
+      const closeBtn = dialog.querySelector('#hw24-dlg-close');
+      if (closeBtn) {
+        closeBtn.onclick = () => {
+          dialog.remove();
+          onDone();
+        };
+      }
+    }
+
+    render();
+    document.body.appendChild(dialog);
+  }
+
+  /* =============================
+     INIT
+     ============================= */
+
+  function init() {
+    injectStyles();
+    injectToggleButton();
+    injectPanel();
+
+    // Watch for add textarea changes
+    const addTextarea = $('hw24-sn-add');
+    if (addTextarea) {
+      addTextarea.addEventListener('input', updateStatus);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 
 })();
