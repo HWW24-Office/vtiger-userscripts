@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.5.1
+// @version      1.5.2
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -914,23 +914,58 @@
   }
 
   function getBillingCountry() {
-    return getFieldValue('bill_country') ||
-           getFieldValue('billing_country') ||
-           getFieldValue('ship_country') ||
-           '';
+    // Billing Country Feld
+    const el =
+      document.querySelector('[name="bill_country"]') ||
+      document.querySelector('[data-fieldname="bill_country"]') ||
+      document.querySelector('input[id*="_editView_fieldName_bill_country"]') ||
+      document.querySelector('[name="billing_country"]');
+    return el?.value || '';
   }
+
+  // Tax Region: Select2 Dropdown mit id="region_id"
+  // Werte: 12=EU, 13=Non-EU, 14=Germany (19%), 15=Austria
+  const TAX_REGION_MAP = {
+    'eu': '12',
+    'non-eu': '13',
+    'germany': '14',
+    'germany (19%)': '14',
+    'austria': '15'
+  };
 
   function getTaxRegion() {
-    return getFieldValue('region') ||
-           getFieldValue('tax_region') ||
-           getFieldValue('taxregion') ||
-           '';
+    const el = document.querySelector('#region_id');
+    if (el && el.selectedIndex >= 0) {
+      return el.options[el.selectedIndex]?.textContent?.trim() || '';
+    }
+    return '';
   }
 
-  function setTaxRegion(value) {
-    return setFieldValue('region', value) ||
-           setFieldValue('tax_region', value) ||
-           setFieldValue('taxregion', value);
+  function setTaxRegion(targetName) {
+    const el = document.querySelector('#region_id');
+    if (!el) return false;
+
+    const targetLower = targetName.toLowerCase();
+    const targetValue = TAX_REGION_MAP[targetLower];
+
+    // Finde die passende Option
+    for (let i = 0; i < el.options.length; i++) {
+      const optText = el.options[i].textContent.toLowerCase();
+      const optValue = el.options[i].value;
+
+      if (optValue === targetValue || optText.includes(targetLower)) {
+        el.value = optValue;
+
+        // Trigger Select2 Change Event
+        if (typeof jQuery !== 'undefined' && jQuery.fn.select2) {
+          jQuery(el).trigger('change');
+        } else {
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return true;
+      }
+    }
+    return false;
   }
 
   function getReverseCharge() {
@@ -957,12 +992,16 @@
   }
 
   function getSubject() {
-    return getFieldValue('subject') ||
-           getFieldValue('quotename') ||
-           getFieldValue('salesorder_no') ||
-           getFieldValue('invoice_no') ||
-           getFieldValue('purchaseorder_no') ||
-           '';
+    // Subject Feld - verschiedene IDs je nach Modul
+    const el =
+      document.querySelector('[name="subject"]') ||
+      document.querySelector('[data-fieldname="subject"]') ||
+      document.querySelector('#PurchaseOrder_editView_fieldName_subject') ||
+      document.querySelector('#Quotes_editView_fieldName_subject') ||
+      document.querySelector('#SalesOrder_editView_fieldName_subject') ||
+      document.querySelector('#Invoice_editView_fieldName_subject') ||
+      document.querySelector('input[id*="_editView_fieldName_subject"]');
+    return el?.value || '';
   }
 
   // Subject-Präfix bestimmt den Typ: W/WV=Wartung, H=Handel, M=Managed Service, R=Reparatur
@@ -987,6 +1026,12 @@
     const subjectType = getSubjectType(); // W/WV=wartung, H=handel, M=managed, R=reparatur
     const issues = [];
 
+    const taxRegionLower = taxRegion.toLowerCase();
+    const isAustriaTaxRegion = taxRegionLower.includes('austria');
+    const isGermanyTaxRegion = taxRegionLower.includes('germany');
+    const isEUTaxRegion = taxRegionLower === 'eu';
+    const isNonEUTaxRegion = taxRegionLower.includes('non-eu');
+
     // Für Quotes, SalesOrder, Invoice
     if (['Quotes', 'SalesOrder', 'Invoice'].includes(currentModule)) {
       if (isAustria(billingCountry)) {
@@ -1000,7 +1045,7 @@
           });
         }
         // Tax Region muss Austria sein
-        if (taxRegion && !taxRegion.toLowerCase().includes('austria')) {
+        if (taxRegion && !isAustriaTaxRegion) {
           issues.push({
             type: 'warning',
             message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Österreich.`,
@@ -1015,7 +1060,7 @@
     if (currentModule === 'PurchaseOrder') {
       if (isAustria(billingCountry)) {
         // Österreich → Tax Region Austria
-        if (taxRegion && !taxRegion.toLowerCase().includes('austria')) {
+        if (taxRegion && !isAustriaTaxRegion) {
           issues.push({
             type: 'warning',
             message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Österreich.`,
@@ -1026,7 +1071,7 @@
       } else if (isGermany(billingCountry)) {
         if (subjectType === 'wartung') {
           // Deutschland + Wartung (W/WV) → EU (nicht Austria)
-          if (taxRegion && taxRegion.toLowerCase().includes('austria')) {
+          if (taxRegion && isAustriaTaxRegion) {
             issues.push({
               type: 'error',
               message: '⚠️ Tax Region ist "Austria", aber Billing Country ist Deutschland mit Wartung (W/WV)!',
@@ -1035,21 +1080,23 @@
             });
           }
         } else if (subjectType === 'handel') {
-          // Deutschland + Handel (H) → Germany
-          if (taxRegion && !taxRegion.toLowerCase().includes('germany')) {
+          // Deutschland + Handel (H) → Germany (19%)
+          if (taxRegion && !isGermanyTaxRegion) {
             issues.push({
               type: 'warning',
-              message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany" sein für Deutschland + Handel (H).`,
+              message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" sein für Deutschland + Handel (H).`,
               fix: () => setTaxRegion('Germany'),
-              fixLabel: 'Tax Region → Germany'
+              fixLabel: 'Tax Region → Germany (19%)'
             });
           }
         }
       } else if (billingCountry) {
         // Andere Länder mit Wartung
         if (subjectType === 'wartung') {
-          const targetRegion = isEUCountry(billingCountry) ? 'EU' : 'Non-EU';
-          if (taxRegion && taxRegion.toLowerCase().includes('austria')) {
+          const isEU = isEUCountry(billingCountry);
+          const targetRegion = isEU ? 'EU' : 'Non-EU';
+
+          if (taxRegion && isAustriaTaxRegion) {
             issues.push({
               type: 'warning',
               message: `⚠️ Tax Region ist "Austria", sollte aber "${targetRegion}" sein für ${billingCountry}.`,
@@ -1173,10 +1220,12 @@
     if (!isEdit) return;
 
     const fieldsToWatch = [
-      '[name="bill_country"]', '[name="billing_country"]',
-      '[name="region"]', '[name="tax_region"]',
+      '[name="bill_country"]',
+      '[data-fieldname="bill_country"]',
+      '#region_id',
       '[name*="reverse_charge"]',
-      '[name="subject"]', '[name="quotename"]'
+      '[name="subject"]',
+      '[data-fieldname="subject"]'
     ];
 
     fieldsToWatch.forEach(sel => {
@@ -1189,6 +1238,11 @@
         }
       }
     });
+
+    // Select2 Change Event für Tax Region
+    if (typeof jQuery !== 'undefined') {
+      jQuery('#region_id').on('change', debounce(injectTaxValidationPanel, 300));
+    }
   }
 
   /* ===============================
