@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.7.1
+// @version      1.8.0
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -553,7 +553,7 @@
     auditor.textContent = auditMaintenance(desc, qty);
   }
 
-  function renderInfo(info, meta, tr = null, rn = '') {
+  function renderInfo(info, meta, tr = null, rn = '', positionIndex = null) {
     // Falls tr nicht übergeben, aus info ermitteln
     if (!tr) tr = info.closest('tr');
     if (!rn) rn = tr?.getAttribute('data-row-num') || tr?.id?.replace('row', '') || '';
@@ -563,7 +563,20 @@
     // Listenpreis: einfaches Symbol (✓ oder —)
     const listenpreisSymbol = meta.listenpreis ? '✓' : '—';
 
+    // Position number (1-indexed for display)
+    const posNum = positionIndex !== null ? positionIndex + 1 : '';
+
     info.innerHTML = `
+      <span style="
+        display:inline-block;
+        padding:2px 6px;
+        border-radius:999px;
+        background:#64748b;
+        color:#fff;
+        font-size:10px;
+        font-weight:bold;
+        margin-right:4px
+      ">#${posNum || rn}</span>
       <span style="
         display:inline-block;
         padding:2px 6px;
@@ -1162,23 +1175,46 @@
 
       // === BILLING COUNTRY GERMANY ===
       else if (billingIsGermany) {
-        // Reverse Charge darf nicht aktiv sein
-        if (reverseCharge) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ Reverse Charge ist aktiviert, aber Billing Country ist Deutschland!',
-            fix: () => setReverseCharge(false),
-            fixLabel: 'Reverse Charge deaktivieren'
-          });
+        // Wartung (W/WV): EU Tax Region + Reverse Charge ist erlaubt
+        if (subjectType === 'wartung') {
+          // Für Wartung: EU oder Germany Tax Region ist OK
+          if (taxRegion && !isGermanyTaxRegion && !isEUTaxRegion) {
+            issues.push({
+              type: 'error',
+              message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" oder "EU" sein für Deutschland + Wartung.`,
+              fix: () => setTaxRegion('Germany'),
+              fixLabel: 'Tax Region → Germany (19%)'
+            });
+          }
+          // Reverse Charge ist OK bei EU Tax Region für Wartung
+          // Nur warnen wenn Reverse Charge aktiv UND Germany Tax Region (das wäre inkonsistent)
+          if (reverseCharge && isGermanyTaxRegion) {
+            issues.push({
+              type: 'error',
+              message: '⚠️ Reverse Charge ist aktiviert, aber Tax Region ist Germany. Für Reverse Charge "EU" wählen.',
+              fix: () => setTaxRegion('EU'),
+              fixLabel: 'Tax Region → EU'
+            });
+          }
         }
-        // Tax Region muss Germany sein
-        if (taxRegion && !isGermanyTaxRegion) {
-          issues.push({
-            type: 'error',
-            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" sein für Billing Country Deutschland.`,
-            fix: () => setTaxRegion('Germany'),
-            fixLabel: 'Tax Region → Germany (19%)'
-          });
+        // Handel (H) oder andere: Germany Tax Region erforderlich, kein Reverse Charge
+        else {
+          if (reverseCharge) {
+            issues.push({
+              type: 'error',
+              message: '⚠️ Reverse Charge ist aktiviert, aber Billing Country ist Deutschland (Handel)!',
+              fix: () => setReverseCharge(false),
+              fixLabel: 'Reverse Charge deaktivieren'
+            });
+          }
+          if (taxRegion && !isGermanyTaxRegion) {
+            issues.push({
+              type: 'error',
+              message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" sein für Billing Country Deutschland.`,
+              fix: () => setTaxRegion('Germany'),
+              fixLabel: 'Tax Region → Germany (19%)'
+            });
+          }
         }
       }
 
@@ -1506,7 +1542,8 @@
 
     const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
 
-    for (const tr of rows) {
+    for (let i = 0; i < rows.length; i++) {
+      const tr = rows[i];
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
 
       const nameEl =
@@ -1524,7 +1561,7 @@
 
       const meta = await fetchMeta(`index.php?module=Products&view=Detail&record=${hid.value}`);
       const info = ensureInfo(td);
-      renderInfo(info, meta);
+      renderInfo(info, meta, tr, rn, i); // Pass position index
 
       refreshBadgeForRow(tr);
       injectButtons(tr);
@@ -1612,7 +1649,8 @@
 
     const rows = findLineItemRows(tbl);
 
-    for (const tr of rows) {
+    for (let i = 0; i < rows.length; i++) {
+      const tr = rows[i];
       const rn = tr.getAttribute('data-row-num') || tr.id?.replace('row', '') || '';
 
       const url = extractProductUrlFromRow(tr);
@@ -1627,7 +1665,7 @@
 
       const meta = await fetchMeta(url);
       const info = ensureInfo(td);
-      renderInfo(info, meta, tr, rn);
+      renderInfo(info, meta, tr, rn, i); // Pass position index
     }
   }
 
