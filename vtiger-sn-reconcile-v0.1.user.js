@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      1.1.0
+// @version      1.2.0
 // @description  Serial number reconciliation with modern UI - add, remove, reassign SNs across line items
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -650,9 +650,9 @@
     // Check IST against SOLL
     for (const [sn, info] of istIndex) {
       if (sollSNs.has(sn)) {
-        matching.push({ sn, position: info.position });
+        matching.push({ sn, position: info.position, rn: info.item.rn });
       } else {
-        toRemove.push({ sn, position: info.position });
+        toRemove.push({ sn, position: info.position, rn: info.item.rn });
       }
     }
 
@@ -663,8 +663,27 @@
       }
     }
 
+    // Calculate which positions will be deleted
+    // (positions that currently have SNs but will have 0 after removal)
+    const positionsToDelete = [];
+    items.forEach(it => {
+      if (it.sns.length === 0) return; // Had no SNs before, skip
+
+      // Check if ALL SNs of this position are being removed
+      const remainingSNs = it.sns.filter(sn => sollSNs.has(sn));
+      if (remainingSNs.length === 0) {
+        const meta = it.meta || {};
+        const displayName = meta.productName || it.productName || `Position ${it.rn}`;
+        positionsToDelete.push({
+          rn: it.rn,
+          position: displayName,
+          removedSNs: it.sns.length
+        });
+      }
+    });
+
     // Store result for apply
-    reconcileResult = { matching, toRemove, missing, items };
+    reconcileResult = { matching, toRemove, missing, items, positionsToDelete };
 
     // Show results
     resultsContainer.style.display = 'block';
@@ -707,6 +726,12 @@
           <span>⚠ Fehlend (nicht im Angebot):</span>
           <span style="color:#92400e">${missing.length}</span>
         </div>
+        ${positionsToDelete.length > 0 ? `
+        <div class="summary-row" style="margin-top:4px;padding-top:4px;border-top:1px dashed #e2e8f0;">
+          <span>🗑 Positionen werden gelöscht:</span>
+          <span style="color:#991b1b">${positionsToDelete.length}</span>
+        </div>
+        ` : ''}
         <div class="summary-row total">
           <span>Soll-Liste:</span>
           <span>${sollList.length} SNs</span>
@@ -768,12 +793,84 @@
       `;
     }
 
+    // Positions to delete section
+    if (positionsToDelete.length > 0) {
+      html += `
+        <div class="result-group">
+          <div class="result-header to-remove" style="background:#fecaca;">
+            <span>🗑 Positionen werden gelöscht</span>
+            <span class="count">${positionsToDelete.length}</span>
+          </div>
+          <div style="padding:8px;font-size:12px;">
+            ${positionsToDelete.map(p => `
+              <div style="padding:4px 0;border-bottom:1px solid #fee2e2;">
+                <strong>${p.position}</strong>
+                <span style="color:#64748b;font-size:11px;margin-left:8px;">(${p.removedSNs} SNs entfernt → 0 übrig)</span>
+              </div>
+            `).join('')}
+          </div>
+          <div style="font-size:11px;color:#991b1b;margin-top:6px;padding-left:8px;">
+            Diese Positionen hatten SNs, nach dem Abgleich bleiben keine übrig.
+          </div>
+        </div>
+      `;
+    }
+
     resultsContainer.innerHTML = html;
   }
 
   /* =============================
      APPLY CHANGES
      ============================= */
+
+  // Delete a line item row by clicking its delete button
+  function deleteLineItemRow(tr) {
+    if (!tr) return false;
+
+    // Find delete button - VTiger uses various selectors
+    const deleteBtn =
+      tr.querySelector('.deleteRow') ||
+      tr.querySelector('[data-action="deleteRow"]') ||
+      tr.querySelector('button[title*="Delete"]') ||
+      tr.querySelector('button[title*="Löschen"]') ||
+      tr.querySelector('i.fa-trash')?.closest('button') ||
+      tr.querySelector('.fa-trash')?.closest('a') ||
+      tr.querySelector('a[onclick*="deleteRow"]') ||
+      tr.querySelector('[onclick*="deleteRow"]');
+
+    if (deleteBtn) {
+      deleteBtn.click();
+      return true;
+    }
+
+    // Fallback: Try to find and call VTiger's deleteRow function
+    const rn = tr.getAttribute('data-row-num') || tr.id?.replace('row', '');
+    if (rn && typeof window.Inventory_Edit_Js !== 'undefined') {
+      try {
+        const container = tr.closest('.inventoryBlock') || tr.closest('#lineItemTab');
+        if (container) {
+          const instance = container.__inventoryInstance;
+          if (instance && typeof instance.deleteRow === 'function') {
+            instance.deleteRow(tr);
+            return true;
+          }
+        }
+      } catch (e) {
+        console.log('SN-Reconcile: deleteRow fallback failed', e);
+      }
+    }
+
+    // Last resort: hide the row and clear its data
+    tr.style.display = 'none';
+    const inputs = tr.querySelectorAll('input, textarea, select');
+    inputs.forEach(inp => {
+      if (inp.name && !inp.name.includes('deleted')) {
+        inp.disabled = true;
+      }
+    });
+
+    return true;
+  }
 
   async function applyChanges() {
     if (!reconcileResult) {
@@ -783,11 +880,19 @@
 
     const items = getLineItems();
 
-    // Create snapshot for undo
+    // Track which positions originally had SNs (before reconciliation)
+    const originalHadSNs = new Map();
+    items.forEach(it => {
+      originalHadSNs.set(it.rn, it.sns.length > 0);
+    });
+
+    // Create snapshot for undo (including row visibility)
     SNAPSHOT = items.map(it => ({
       rn: it.rn,
       desc: it.descEl?.value,
-      qty: it.qtyEl?.value
+      qty: it.qtyEl?.value,
+      hadSNs: it.sns.length > 0,
+      rowHtml: it.tr?.outerHTML // For potential restore
     }));
     $('hw24-sn-undo').disabled = false;
 
@@ -804,9 +909,26 @@
 
     // Function to write back changes
     const writeBack = () => {
+      let deletedCount = 0;
+
       items.forEach(it => {
         if (!it.descEl) return;
 
+        // Check if this position should be deleted:
+        // - Originally HAD SNs
+        // - Now has ZERO SNs
+        const hadSNsBefore = originalHadSNs.get(it.rn);
+        const hasNoSNsNow = it.sns.length === 0;
+
+        if (hadSNsBefore && hasNoSNsNow) {
+          // Delete this row
+          if (deleteLineItemRow(it.tr)) {
+            deletedCount++;
+            return; // Don't update the row, it's being deleted
+          }
+        }
+
+        // Update the row normally
         const snLine = it.sns.length ? `S/N: ${it.sns.join(', ')}` : '';
         const rest = it.desc.replace(/S\/N\s*:[^\n\r]+/i, '').trim();
         it.descEl.value = [snLine, rest].filter(Boolean).join('\n');
@@ -824,7 +946,12 @@
       $('hw24-sn-results').style.display = 'none';
       $('hw24-sn-actions').style.display = 'none';
 
-      showStatus('success', `✓ ${toRemoveSet.size} SN(s) entfernt`);
+      // Build status message
+      let msg = [];
+      if (toRemoveSet.size > 0) msg.push(`${toRemoveSet.size} SN(s) entfernt`);
+      if (deletedCount > 0) msg.push(`${deletedCount} Position(en) gelöscht`);
+
+      showStatus('success', `✓ ${msg.join(', ')}`);
     };
 
     // If there are missing SNs, open dialog to add them
