@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.7.0
+// @version      1.7.1
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -208,31 +208,58 @@
         getVal('ek');
 
       // Listenpreis (cf_2205) - Checkbox oder Ja/Nein Feld
-      const getCustomFieldValue = (fieldId) => {
-        // Versuche verschiedene Selektoren für Custom Fields
-        const el =
-          dp.querySelector(`#Products_detailView_fieldValue_${fieldId}`) ||
-          dp.querySelector(`[data-name="${fieldId}"]`) ||
-          dp.querySelector(`td[id*="${fieldId}"]`) ||
-          dp.querySelector(`span[id*="${fieldId}"]`);
-        if (el) return S(el.textContent);
+      // Versuche verschiedene Selektoren für das cf_2205 Feld
+      let listenpreisRaw = '';
 
-        // Fallback: Suche nach Label "Listenpreis" oder "List Price"
-        const labelEl = [...dp.querySelectorAll('[id^="Products_detailView_fieldLabel_"]')]
-          .find(l => {
-            const txt = S(l.textContent).toLowerCase();
-            return txt.includes('listenpreis') || txt.includes('list price');
-          });
-        if (labelEl) {
-          const valueEl = dp.getElementById(labelEl.id.replace('fieldLabel', 'fieldValue'));
-          return S(valueEl?.textContent);
+      // Methode 1: Direkter ID-Selektor
+      const cfEl1 = dp.querySelector('#Products_detailView_fieldValue_cf_2205');
+      if (cfEl1) listenpreisRaw = S(cfEl1.textContent);
+
+      // Methode 2: data-name Attribut
+      if (!listenpreisRaw) {
+        const cfEl2 = dp.querySelector('[data-name="cf_2205"]');
+        if (cfEl2) listenpreisRaw = S(cfEl2.textContent || cfEl2.value);
+      }
+
+      // Methode 3: Beliebiges Element mit cf_2205 in der ID
+      if (!listenpreisRaw) {
+        const cfEl3 = dp.querySelector('[id*="cf_2205"]');
+        if (cfEl3) listenpreisRaw = S(cfEl3.textContent || cfEl3.value);
+      }
+
+      // Methode 4: Input-Feld mit name cf_2205
+      if (!listenpreisRaw) {
+        const cfEl4 = dp.querySelector('input[name="cf_2205"]');
+        if (cfEl4) {
+          // Checkbox: checked Status
+          if (cfEl4.type === 'checkbox') {
+            listenpreisRaw = cfEl4.checked ? 'ja' : '';
+          } else {
+            listenpreisRaw = S(cfEl4.value);
+          }
         }
-        return '';
-      };
+      }
 
-      const listenpreisRaw = getCustomFieldValue('cf_2205');
-      // Interpretiere als Boolean: "Ja", "Yes", "1", checked → true
-      const isListenpreis = ['ja', 'yes', '1', 'true', 'x', '✓', '✔'].some(
+      // Methode 5: Suche nach Label "Listenpreis" und hole den Wert daneben
+      if (!listenpreisRaw) {
+        const allLabels = dp.querySelectorAll('td.fieldLabel, th.fieldLabel, .fieldLabel, label');
+        for (const lab of allLabels) {
+          const txt = S(lab.textContent).toLowerCase();
+          if (txt.includes('listenpreis') || txt.includes('list price') || txt.includes('listprice')) {
+            // Nächstes Sibling oder nächste Zelle
+            const valueCell = lab.nextElementSibling ||
+                              lab.closest('tr')?.querySelector('td.fieldValue, .fieldValue') ||
+                              lab.parentElement?.querySelector('.fieldValue');
+            if (valueCell) {
+              listenpreisRaw = S(valueCell.textContent);
+              break;
+            }
+          }
+        }
+      }
+
+      // Interpretiere als Boolean: "Ja", "Yes", "1", checked, Häkchen → true
+      const isListenpreis = listenpreisRaw && ['ja', 'yes', '1', 'true', 'x', '✓', '✔', 'on'].some(
         v => listenpreisRaw.toLowerCase().includes(v)
       );
 
@@ -533,19 +560,8 @@
 
     const markup = tr ? calcMarkup(tr, rn, meta) : null;
 
-    // Listenpreis Badge
-    const listenpreisBadge = meta.listenpreis
-      ? `<span style="
-          display:inline-block;
-          padding:2px 6px;
-          border-radius:999px;
-          background:#f59e0b;
-          color:#fff;
-          font-size:10px;
-          margin-left:6px;
-          font-weight:bold
-        ">LP</span>`
-      : '';
+    // Listenpreis: einfaches Symbol (✓ oder —)
+    const listenpreisSymbol = meta.listenpreis ? '✓' : '—';
 
     info.innerHTML = `
       <span style="
@@ -561,7 +577,8 @@
       • SLA: ${meta.sla || '—'}
       • Duration: ${meta.duration || '—'}
       • Country: ${meta.country || '—'}
-      • Markup: ${markup || '—'}${listenpreisBadge}
+      • Markup: ${markup || '—'}
+      • LP: ${listenpreisSymbol}
     `;
   }
 
