@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.6.1
+// @version      1.7.0
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -207,13 +207,43 @@
         getVal('einkauf') ||
         getVal('ek');
 
+      // Listenpreis (cf_2205) - Checkbox oder Ja/Nein Feld
+      const getCustomFieldValue = (fieldId) => {
+        // Versuche verschiedene Selektoren für Custom Fields
+        const el =
+          dp.querySelector(`#Products_detailView_fieldValue_${fieldId}`) ||
+          dp.querySelector(`[data-name="${fieldId}"]`) ||
+          dp.querySelector(`td[id*="${fieldId}"]`) ||
+          dp.querySelector(`span[id*="${fieldId}"]`);
+        if (el) return S(el.textContent);
+
+        // Fallback: Suche nach Label "Listenpreis" oder "List Price"
+        const labelEl = [...dp.querySelectorAll('[id^="Products_detailView_fieldLabel_"]')]
+          .find(l => {
+            const txt = S(l.textContent).toLowerCase();
+            return txt.includes('listenpreis') || txt.includes('list price');
+          });
+        if (labelEl) {
+          const valueEl = dp.getElementById(labelEl.id.replace('fieldLabel', 'fieldValue'));
+          return S(valueEl?.textContent);
+        }
+        return '';
+      };
+
+      const listenpreisRaw = getCustomFieldValue('cf_2205');
+      // Interpretiere als Boolean: "Ja", "Yes", "1", checked → true
+      const isListenpreis = ['ja', 'yes', '1', 'true', 'x', '✓', '✔'].some(
+        v => listenpreisRaw.toLowerCase().includes(v)
+      );
+
       const meta = {
         pn: productNo,
         vendor: getVal('vendor'),
         sla: getVal('sla'),
         duration: getVal('duration'),
         country: getVal('country'),
-        purchaseCost: toNum(pcRaw) // ✅ Produktseite EK pro Stück
+        purchaseCost: toNum(pcRaw), // ✅ Produktseite EK pro Stück
+        listenpreis: isListenpreis  // ✅ Listenpreis Ja/Nein
       };
 
       mem.set(url, meta);
@@ -503,6 +533,20 @@
 
     const markup = tr ? calcMarkup(tr, rn, meta) : null;
 
+    // Listenpreis Badge
+    const listenpreisBadge = meta.listenpreis
+      ? `<span style="
+          display:inline-block;
+          padding:2px 6px;
+          border-radius:999px;
+          background:#f59e0b;
+          color:#fff;
+          font-size:10px;
+          margin-left:6px;
+          font-weight:bold
+        ">LP</span>`
+      : '';
+
     info.innerHTML = `
       <span style="
         display:inline-block;
@@ -517,7 +561,7 @@
       • SLA: ${meta.sla || '—'}
       • Duration: ${meta.duration || '—'}
       • Country: ${meta.country || '—'}
-      • Markup: ${markup || '—'}
+      • Markup: ${markup || '—'}${listenpreisBadge}
     `;
   }
 
@@ -1351,8 +1395,9 @@
   }
 
   // Save-Button Interceptor
-  let originalSaveHandler = null;
+  // WICHTIG: Wir verwenden eine Flag-basierte Lösung, um VTiger's Event-Handler NICHT zu entfernen!
   let saveInterceptorInstalled = false;
+  let skipValidation = false; // Flag um Validierung nach Fix/Ignore zu überspringen
 
   function interceptSaveButton() {
     if (!isEdit || saveInterceptorInstalled) return;
@@ -1368,11 +1413,17 @@
     );
 
     saveButtons.forEach(btn => {
-      // Clone und ersetze den Button, um bestehende Event Listener zu entfernen
-      const newBtn = btn.cloneNode(true);
-      btn.parentNode?.replaceChild(newBtn, btn);
+      // WICHTIG: Button NICHT klonen! Das würde VTiger's Event-Handler entfernen
+      // und dazu führen, dass LineItem-Daten nicht serialisiert werden.
+      // Stattdessen fügen wir nur einen Capture-Phase-Listener hinzu.
 
-      newBtn.addEventListener('click', function(e) {
+      btn.addEventListener('click', function(e) {
+        // Wenn Flag gesetzt, Validierung überspringen und normal speichern
+        if (skipValidation) {
+          skipValidation = false;
+          return; // Lasse das Event durch zu VTiger's Handlern
+        }
+
         const issues = validateTaxSettings();
 
         if (issues && issues.length > 0) {
@@ -1385,42 +1436,42 @@
             // onFix
             () => {
               issues.forEach(issue => issue.fix?.());
-              // Nach Fix speichern
-              setTimeout(() => triggerSave(), 100);
+              // Nach Fix speichern - Flag setzen und Button erneut klicken
+              setTimeout(() => triggerSave(btn), 100);
             },
             // onIgnore
             () => {
-              // Direkt speichern ohne Fix
-              triggerSave();
+              // Direkt speichern ohne Fix - Flag setzen und Button erneut klicken
+              triggerSave(btn);
             }
           );
 
           return false;
         }
+        // Keine Issues: Event normal durchlassen zu VTiger's Handlern
       }, true); // useCapture = true für höchste Priorität
     });
 
     saveInterceptorInstalled = true;
   }
 
-  function triggerSave() {
-    // Temporär den Interceptor deaktivieren
-    saveInterceptorInstalled = false;
+  function triggerSave(btn) {
+    // Flag setzen um Validierung beim nächsten Click zu überspringen
+    skipValidation = true;
 
-    // Finde und klicke den Save-Button
-    const saveBtn = document.querySelector(
-      'button[name="saveButton"], ' +
-      'input[name="saveButton"], ' +
-      'button.btn-success[type="submit"], ' +
-      '.saveButton'
-    );
-
-    if (saveBtn) {
-      // Erstelle einen neuen Click ohne unseren Interceptor
-      const form = saveBtn.closest('form');
-      if (form) {
-        form.submit();
-      } else {
+    // Button erneut klicken - diesmal wird die Validierung übersprungen
+    // und VTiger's originale Event-Handler werden ausgeführt
+    if (btn) {
+      btn.click();
+    } else {
+      // Fallback: Finde den Save-Button
+      const saveBtn = document.querySelector(
+        'button[name="saveButton"], ' +
+        'input[name="saveButton"], ' +
+        'button.btn-success[type="submit"], ' +
+        '.saveButton'
+      );
+      if (saveBtn) {
         saveBtn.click();
       }
     }
