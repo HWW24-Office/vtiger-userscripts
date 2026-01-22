@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.5.2
+// @version      1.5.4
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -968,27 +968,59 @@
     return false;
   }
 
+  function findReverseChargeCheckbox() {
+    // cf_924 ist das Reverse Charge Feld in VTiger
+    // Verschiedene mögliche Selektoren
+    const selectors = [
+      'input[type="checkbox"][name="cf_924"]',
+      'input[name="cf_924"]',
+      'input[type="checkbox"][data-fieldname="cf_924"]',
+      '[data-name="cf_924"]',
+      'input[type="checkbox"][name*="reverse_charge"]',
+      'input[type="checkbox"][name*="reverse"]'
+    ];
+
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && (el.type === 'checkbox' || el.type === 'hidden')) {
+        return el;
+      }
+    }
+
+    return null;
+  }
+
   function getReverseCharge() {
-    const el =
-      document.querySelector('[name="cf_potentials_reverse_charge"]') ||
-      document.querySelector('[name="reverse_charge"]') ||
-      document.querySelector('[name*="reverse_charge"]') ||
-      document.querySelector('input[type="checkbox"][name*="reverse"]');
-    return el?.checked || false;
+    const el = findReverseChargeCheckbox();
+    if (!el) return false;
+
+    // Checkbox
+    if (el.type === 'checkbox') {
+      return el.checked;
+    }
+    // Hidden input (value = "1" oder "on" = aktiv)
+    if (el.type === 'hidden') {
+      return el.value === '1' || el.value === 'on' || el.value === 'true';
+    }
+    return false;
   }
 
   function setReverseCharge(value) {
-    const el =
-      document.querySelector('[name="cf_potentials_reverse_charge"]') ||
-      document.querySelector('[name="reverse_charge"]') ||
-      document.querySelector('[name*="reverse_charge"]') ||
-      document.querySelector('input[type="checkbox"][name*="reverse"]');
-    if (el) {
+    const el = findReverseChargeCheckbox();
+    if (!el) return false;
+
+    if (el.type === 'checkbox') {
       el.checked = !!value;
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
+      // Manche VTiger Checkboxen brauchen click Event
+      if (!value && el.checked) {
+        el.click();
+      }
+    } else if (el.type === 'hidden') {
+      el.value = value ? '1' : '0';
+      el.dispatchEvent(new Event('change', { bubbles: true }));
     }
-    return false;
+    return true;
   }
 
   function getSubject() {
@@ -1223,6 +1255,7 @@
       '[name="bill_country"]',
       '[data-fieldname="bill_country"]',
       '#region_id',
+      '[name="cf_924"]',
       '[name*="reverse_charge"]',
       '[name="subject"]',
       '[data-fieldname="subject"]'
