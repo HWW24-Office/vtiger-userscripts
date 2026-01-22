@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.3.1
+// @version      1.3.2
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -536,8 +536,8 @@
      =============================== */
 
   function calculateTotals() {
-    const tbl = findLineItemTable();
-    const rows = tbl ? findLineItemRows(tbl) : [];
+    // Verwende die originalen Selektoren die funktioniert haben
+    const rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
 
     let sumPC = 0;
     let sumSelling = 0;
@@ -601,13 +601,10 @@
       document.querySelector('[id$="_netTotal"]') ||
       document.querySelector('.netTotal');
 
-    const tbl = findLineItemTable();
-    const insertTarget = netTotalEl?.closest('tr')?.parentElement || tbl?.parentElement || document.querySelector('.detailViewContainer');
+    const tbl = document.querySelector('#lineItemTab');
+    const insertTarget = netTotalEl?.closest('tr')?.parentElement || tbl?.parentElement;
 
-    if (!insertTarget) {
-      console.log('[HW24] No insert target found for totals panel');
-      return;
-    }
+    if (!insertTarget) return;
 
     const panel = document.createElement('div');
     panel.id = 'hw24-totals-panel';
@@ -698,7 +695,7 @@
   function injectReloadButton() {
     if (document.getElementById('hw24-reload-btn')) return;
 
-    const tbl = findLineItemTable();
+    const tbl = document.querySelector('#lineItemTab');
     if (!tbl) return;
 
     const btn = document.createElement('button');
@@ -914,17 +911,29 @@
   }
 
   if (isDetail) {
+    // Debug: Zeige alle Tabellen und mögliche LineItem-Container
+    console.log('[HW24] Detail View Debug:');
+    console.log('[HW24] All tables:', document.querySelectorAll('table'));
+    console.log('[HW24] #lineItemTab:', document.querySelector('#lineItemTab'));
+    console.log('[HW24] Tables with "line" in id:', document.querySelectorAll('table[id*="line"], table[id*="Line"], [id*="lineItem"]'));
+    console.log('[HW24] Product links:', document.querySelectorAll('a[href*="module=Products"]'));
+
     // Warte auf AJAX-geladene LineItem-Tabelle
     const initDetail = async () => {
       let tbl = findLineItemTable();
+      console.log('[HW24] findLineItemTable result:', tbl);
 
       // Falls Tabelle noch nicht da, warte darauf
       if (!tbl) {
         console.log('[HW24] Waiting for lineItem table...');
-        tbl = await waitForElement('#lineItemTab, .lineItemTab, [id*="lineItem"], .inventoryTable', 5000);
+        tbl = await waitForElement('#lineItemTab, .lineItemTab, [id*="lineItem"], .inventoryTable, table', 5000);
+        console.log('[HW24] After wait, found:', tbl);
       }
 
       if (tbl) {
+        const rows = findLineItemRows(tbl);
+        console.log('[HW24] Found rows:', rows.length, rows);
+
         await processDetail();
         injectTotalsPanel();
         injectReloadButton();
@@ -937,6 +946,12 @@
         new MutationObserver(rerunD).observe(tbl, { childList: true, subtree: true });
       } else {
         console.log('[HW24] LineItem table not found after waiting');
+        // Fallback: Zeige alle Tabellen
+        console.log('[HW24] Fallback - all tables on page:', [...document.querySelectorAll('table')].map(t => ({
+          id: t.id,
+          class: t.className,
+          rows: t.rows?.length
+        })));
       }
     };
 
@@ -945,8 +960,11 @@
 
     // Fallback: Nochmal versuchen wenn Seite komplett geladen
     if (document.readyState !== 'complete') {
-      window.addEventListener('load', () => setTimeout(initDetail, 500));
+      window.addEventListener('load', () => setTimeout(initDetail, 1000));
     }
+
+    // Extra Fallback nach 2 Sekunden
+    setTimeout(initDetail, 2000);
   }
 
 })();
