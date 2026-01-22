@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.0.0
+// @version      2.1.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -761,46 +761,62 @@
 
     function openStandardizer(tr, textarea) {
       const original = textarea.value;
-      let lang = 'en';
       const overlay = document.createElement('div');
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99999;display:flex;align-items:center;justify-content:center;';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;';
 
       const box = document.createElement('div');
-      box.style.cssText = 'background:#fff;padding:12px;width:800px;max-width:90%;font-size:12px';
+      box.style.cssText = 'background:#fff;border-radius:12px;width:700px;max-width:90%;font-size:13px;box-shadow:0 20px 50px rgba(0,0,0,0.3);overflow:hidden;';
+
+      const header = document.createElement('div');
+      header.style.cssText = 'background:linear-gradient(135deg,#1e293b 0%,#334155 100%);color:#fff;padding:14px 18px;font-weight:600;font-size:14px;';
+      header.textContent = 'Description prüfen';
+
+      const body = document.createElement('div');
+      body.style.cssText = 'padding:18px;';
+
+      const labelOrig = document.createElement('div');
+      labelOrig.style.cssText = 'font-weight:600;color:#64748b;font-size:11px;text-transform:uppercase;margin-bottom:6px;';
+      labelOrig.textContent = 'Original';
 
       const origTA = document.createElement('textarea');
       origTA.readOnly = true;
-      origTA.style.cssText = 'width:100%;height:140px';
+      origTA.style.cssText = 'width:100%;height:120px;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;background:#f8fafc;resize:none;';
       origTA.value = original;
+
+      const labelPrev = document.createElement('div');
+      labelPrev.style.cssText = 'font-weight:600;color:#64748b;font-size:11px;text-transform:uppercase;margin:14px 0 6px;';
+      labelPrev.textContent = 'Vorschau (nach Auto-Fix)';
 
       const prevTA = document.createElement('textarea');
       prevTA.readOnly = true;
-      prevTA.style.cssText = 'width:100%;height:140px';
+      prevTA.style.cssText = 'width:100%;height:120px;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;background:#f0fdf4;resize:none;';
+      prevTA.value = applyAllFixes(original);
 
-      const update = () => {
-        const t = applyAllFixes(normalizeDescriptionLanguage(original, lang));
-        prevTA.value = t;
-      };
-      update();
+      const footer = document.createElement('div');
+      footer.style.cssText = 'padding:14px 18px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:10px;';
 
-      const switcher = document.createElement('div');
-      switcher.style.cssText = 'margin:6px 0;';
-      switcher.innerHTML = '<button type="button" data-lang="de">DE</button><button type="button" data-lang="en">EN</button>';
-      switcher.querySelectorAll('button').forEach(b => b.onclick = () => { lang = b.dataset.lang; update(); });
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Abbrechen';
+      cancelBtn.style.cssText = 'padding:8px 16px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:6px;font-size:13px;cursor:pointer;';
+      cancelBtn.onclick = () => overlay.remove();
 
-      const actions = document.createElement('div');
-      actions.style.cssText = 'margin-top:6px;';
-      actions.innerHTML = '<button type="button" id="apply">Apply</button><button type="button" id="cancel">Cancel</button>';
-      actions.onclick = e => {
-        if (e.target.id === 'apply') {
-          textarea.value = prevTA.value;
-          refreshBadgeForRow(tr);
-        }
+      const applyBtn = document.createElement('button');
+      applyBtn.type = 'button';
+      applyBtn.textContent = 'Übernehmen';
+      applyBtn.style.cssText = 'padding:8px 16px;border:none;background:#16a34a;color:#fff;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;';
+      applyBtn.onclick = () => {
+        textarea.value = prevTA.value;
+        refreshBadgeForRow(tr);
+        fire(textarea);
         overlay.remove();
       };
 
-      box.append('Original', origTA, 'Vorschau', switcher, prevTA, actions);
+      footer.append(cancelBtn, applyBtn);
+      body.append(labelOrig, origTA, labelPrev, prevTA);
+      box.append(header, body, footer);
       overlay.appendChild(box);
+      overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
       document.body.appendChild(overlay);
     }
 
@@ -809,46 +825,124 @@
       const ta = tr.querySelector('textarea[name*="comment"]') || tr.querySelector('textarea[id^="comment"]');
       if (!ta) return;
 
+      const btnContainer = document.createElement('div');
+      btnContainer.style.cssText = 'margin-top:6px;display:flex;gap:6px;';
+
       const stdBtn = document.createElement('button');
       stdBtn.type = 'button';
       stdBtn.className = 'hw24-desc-btn';
-      stdBtn.textContent = 'Description standardisieren';
-      stdBtn.style.cssText = 'margin-top:4px;font-size:11px';
+      stdBtn.textContent = '🔍 Prüfen';
+      stdBtn.title = 'Zeigt Vorschau der korrigierten Description (S/N-Format, Datumsformat)';
+      stdBtn.style.cssText = 'padding:4px 8px;font-size:11px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;color:#475569;';
       stdBtn.onclick = e => { e.preventDefault(); e.stopPropagation(); openStandardizer(tr, ta); };
 
       const refreshBtn = document.createElement('button');
       refreshBtn.type = 'button';
-      refreshBtn.textContent = 'Refresh Check';
-      refreshBtn.style.cssText = 'margin-top:4px;margin-left:6px;font-size:11px';
+      refreshBtn.textContent = '↻';
+      refreshBtn.title = 'Wartungs-Check aktualisieren';
+      refreshBtn.style.cssText = 'padding:4px 8px;font-size:11px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;color:#475569;';
       refreshBtn.onclick = e => { e.preventDefault(); e.stopPropagation(); refreshBadgeForRow(tr); };
 
-      ta.after(stdBtn, refreshBtn);
+      btnContainer.append(stdBtn, refreshBtn);
+      ta.after(btnContainer);
     }
 
     function injectGlobalFixButton() {
       if (!isEdit) return;
-      if ($('hw24-global-fix')) return;
+      if ($('hw24-desc-toolbar')) return;
 
-      const btn = document.createElement('button');
-      btn.id = 'hw24-global-fix';
-      btn.type = 'button';
-      btn.textContent = 'Alle Descriptions korrigieren';
-      btn.style.cssText = 'margin:8px 0;font-size:12px';
+      const toolbar = document.createElement('div');
+      toolbar.id = 'hw24-desc-toolbar';
+      toolbar.style.cssText = 'margin:10px 0;padding:10px 14px;background:linear-gradient(135deg,#f8fafc 0%,#e2e8f0 100%);border:1px solid #cbd5e1;border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
 
-      btn.onclick = () => {
+      const label = document.createElement('span');
+      label.style.cssText = 'font-size:12px;font-weight:600;color:#475569;margin-right:4px;';
+      label.textContent = 'Descriptions:';
+
+      const btnStyle = 'padding:6px 12px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-weight:500;transition:all 0.15s;';
+
+      // Auto-Fix Button
+      const fixBtn = document.createElement('button');
+      fixBtn.id = 'hw24-global-fix';
+      fixBtn.type = 'button';
+      fixBtn.innerHTML = '🔧 Auto-Fix';
+      fixBtn.title = 'Korrigiert S/N-Format (Komma + Leerzeichen) und Datumsformate in allen Positionen';
+      fixBtn.style.cssText = btnStyle + 'background:#3b82f6;color:#fff;';
+      fixBtn.onmouseenter = () => fixBtn.style.background = '#2563eb';
+      fixBtn.onmouseleave = () => fixBtn.style.background = '#3b82f6';
+      fixBtn.onclick = () => {
         const tbl = document.querySelector('#lineItemTab');
         if (!tbl) return;
         const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+        let count = 0;
         rows.forEach(tr => {
           const ta = tr.querySelector('textarea[name*="comment"]') || tr.querySelector('textarea[id^="comment"]');
           if (!ta) return;
+          const before = ta.value;
           ta.value = applyAllFixes(ta.value);
+          if (before !== ta.value) count++;
+          fire(ta);
           refreshBadgeForRow(tr);
         });
+        showToolbarStatus(toolbar, `✓ ${count} korrigiert`);
       };
 
+      // Translate to EN Button
+      const toEnBtn = document.createElement('button');
+      toEnBtn.type = 'button';
+      toEnBtn.innerHTML = '🌐 → EN';
+      toEnBtn.title = 'Übersetzt alle Descriptions nach Englisch (Standort→Location, inkl.→incl., Service Ende→Service End)';
+      toEnBtn.style.cssText = btnStyle + 'background:#8b5cf6;color:#fff;';
+      toEnBtn.onmouseenter = () => toEnBtn.style.background = '#7c3aed';
+      toEnBtn.onmouseleave = () => toEnBtn.style.background = '#8b5cf6';
+      toEnBtn.onclick = () => translateAllDescriptions('en', toolbar);
+
+      // Translate to DE Button
+      const toDeBtn = document.createElement('button');
+      toDeBtn.type = 'button';
+      toDeBtn.innerHTML = '🌐 → DE';
+      toDeBtn.title = 'Übersetzt alle Descriptions nach Deutsch (Location→Standort, incl.→inkl., Service End→Service Ende)';
+      toDeBtn.style.cssText = btnStyle + 'background:#8b5cf6;color:#fff;';
+      toDeBtn.onmouseenter = () => toDeBtn.style.background = '#7c3aed';
+      toDeBtn.onmouseleave = () => toDeBtn.style.background = '#8b5cf6';
+      toDeBtn.onclick = () => translateAllDescriptions('de', toolbar);
+
+      // Status span
+      const status = document.createElement('span');
+      status.id = 'hw24-toolbar-status';
+      status.style.cssText = 'font-size:11px;color:#16a34a;font-weight:500;margin-left:auto;opacity:0;transition:opacity 0.3s;';
+
+      toolbar.append(label, fixBtn, toEnBtn, toDeBtn, status);
+
       const tbl = document.querySelector('#lineItemTab');
-      tbl?.parentElement?.insertBefore(btn, tbl);
+      tbl?.parentElement?.insertBefore(toolbar, tbl);
+    }
+
+    function translateAllDescriptions(lang, toolbar) {
+      const tbl = document.querySelector('#lineItemTab');
+      if (!tbl) return;
+      const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+      let count = 0;
+      rows.forEach(tr => {
+        const ta = tr.querySelector('textarea[name*="comment"]') || tr.querySelector('textarea[id^="comment"]');
+        if (!ta) return;
+        const before = ta.value;
+        ta.value = normalizeDescriptionLanguage(ta.value, lang);
+        if (before !== ta.value) count++;
+        fire(ta);
+        refreshBadgeForRow(tr);
+      });
+      const langName = lang === 'en' ? 'EN' : 'DE';
+      showToolbarStatus(toolbar, `✓ ${count} → ${langName}`);
+    }
+
+    function showToolbarStatus(toolbar, msg) {
+      const status = toolbar.querySelector('#hw24-toolbar-status');
+      if (status) {
+        status.textContent = msg;
+        status.style.opacity = '1';
+        setTimeout(() => { status.style.opacity = '0'; }, 2500);
+      }
     }
 
     /* Totals Panel */
