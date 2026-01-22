@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.3.3
+// @version      1.4.0
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -85,7 +85,18 @@
     return toNum(el.textContent);
   }
 
+  // Detail-View: Werte aus Tabellenzellen extrahieren (Index-basiert)
+  // Spalten: 0=Item Name, 1=Quantity, 2=Purchase Cost, 3=Selling Price, 4=Total, 5=Margin, 6=Net Price
+  function getDetailCellValue(tr, colIndex) {
+    const cells = tr.querySelectorAll('td');
+    if (cells.length > colIndex) {
+      return toNum(cells[colIndex].textContent);
+    }
+    return 0;
+  }
+
   function getQuantity(tr, rn) {
+    // Edit-Modus
     const q =
       tr.querySelector(`#qty${rn}`) ||
       tr.querySelector(`#quantity${rn}`) ||
@@ -93,12 +104,18 @@
       tr.querySelector(`input[name="quantity${rn}"]`) ||
       tr.querySelector(`#qty${rn}_display`) ||
       tr.querySelector(`#quantity${rn}_display`);
-    const v = parseInt(S(q?.value ?? q?.textContent), 10);
-    return Number.isFinite(v) ? v : 0;
+    if (q) {
+      const v = parseInt(S(q?.value ?? q?.textContent), 10);
+      return Number.isFinite(v) ? v : 0;
+    }
+    // Detail-Modus: Spalte 1
+    if (isDetail) return getDetailCellValue(tr, 1);
+    return 0;
   }
 
   // Selling Price pro Stück (Unit Selling Price) — NICHT quantity-abhängig
   function getSellingPricePerUnit(tr, rn) {
+    // Edit-Modus
     const el =
       tr.querySelector(`#listPrice${rn}`) ||
       tr.querySelector(`input[name="listPrice${rn}"]`) ||
@@ -106,10 +123,14 @@
       tr.querySelector(`span#listPrice${rn}_display`) ||
       tr.querySelector(`div#listPrice${rn}_display`) ||
       tr.querySelector(`[id="listPrice${rn}_display"]`);
-    return getFieldNumber(el);
+    if (el) return getFieldNumber(el);
+    // Detail-Modus: Spalte 3
+    if (isDetail) return getDetailCellValue(tr, 3);
+    return 0;
   }
 
   function getPurchaseCostPerUnit(tr, rn) {
+    // Edit-Modus
     const el =
       tr.querySelector(`#purchaseCost${rn}`) ||
       tr.querySelector(`input[name="purchaseCost${rn}"]`) ||
@@ -117,15 +138,22 @@
       tr.querySelector(`span#purchaseCost${rn}_display`) ||
       tr.querySelector(`div#purchaseCost${rn}_display`) ||
       tr.querySelector(`[id="purchaseCost${rn}_display"]`);
-    return getFieldNumber(el);
+    if (el) return getFieldNumber(el);
+    // Detail-Modus: Spalte 2
+    if (isDetail) return getDetailCellValue(tr, 2);
+    return 0;
   }
 
   function getLineItemTotal(tr, rn) {
+    // Edit-Modus
     const el =
       tr.querySelector(`#productTotal${rn}`) ||
       tr.querySelector(`#netPrice${rn}`) ||
       tr.querySelector(`#productTotal${rn}_display`);
-    return getFieldNumber(el);
+    if (el) return getFieldNumber(el);
+    // Detail-Modus: Spalte 6 (Net Price)
+    if (isDetail) return getDetailCellValue(tr, 6);
+    return 0;
   }
 
   /* ===============================
@@ -181,7 +209,14 @@
 
   function calcMarkup(tr, rn, meta) {
     const sellingPerUnit = getSellingPricePerUnit(tr, rn);   // ✅ pro Stück
-    const pcProduct = toNum(meta?.purchaseCost || 0);         // ✅ pro Stück (Produktseite)
+
+    // Versuche zuerst den Purchase Cost aus der Zeile (Detail-View)
+    let pcProduct = getPurchaseCostPerUnit(tr, rn);
+
+    // Fallback auf Meta-Daten (Produktseite)
+    if (!pcProduct) {
+      pcProduct = toNum(meta?.purchaseCost || 0);
+    }
 
     if (!sellingPerUnit || !pcProduct) return null;
     return (sellingPerUnit / pcProduct).toFixed(2);
@@ -440,9 +475,11 @@
     auditor.textContent = auditMaintenance(desc, qty);
   }
 
-  function renderInfo(info, meta) {
-    const tr = info.closest('tr');
-    const rn = tr?.getAttribute('data-row-num') || tr?.id?.replace('row', '') || '';
+  function renderInfo(info, meta, tr = null, rn = '') {
+    // Falls tr nicht übergeben, aus info ermitteln
+    if (!tr) tr = info.closest('tr');
+    if (!rn) rn = tr?.getAttribute('data-row-num') || tr?.id?.replace('row', '') || '';
+
     const markup = tr ? calcMarkup(tr, rn, meta) : null;
 
     info.innerHTML = `
@@ -617,10 +654,7 @@
                 document.querySelector('.lineItemsTable');
     const insertTarget = netTotalEl?.closest('tr')?.parentElement || tbl?.parentElement;
 
-    if (!insertTarget) {
-      console.log('[HW24] injectTotalsPanel: No insert target found');
-      return;
-    }
+    if (!insertTarget) return;
 
     const panel = document.createElement('div');
     panel.id = 'hw24-totals-panel';
@@ -708,6 +742,20 @@
     }
   }
 
+  // Meta-Daten Sichtbarkeit State
+  let metaVisible = true;
+
+  function toggleMetaVisibility() {
+    metaVisible = !metaVisible;
+    document.querySelectorAll('.vt-prodinfo').forEach(el => {
+      el.style.display = metaVisible ? 'block' : 'none';
+    });
+    const toggleBtn = document.getElementById('hw24-meta-toggle');
+    if (toggleBtn) {
+      toggleBtn.textContent = metaVisible ? '👁 Meta ausblenden' : '👁 Meta einblenden';
+    }
+  }
+
   function injectReloadButton() {
     if (document.getElementById('hw24-reload-btn')) return;
 
@@ -716,12 +764,17 @@
                 document.querySelector('.lineItemsTable');
     if (!tbl) return;
 
+    // Container für Buttons
+    const btnContainer = document.createElement('div');
+    btnContainer.id = 'hw24-btn-container';
+    btnContainer.style.cssText = 'margin: 8px 0; display: flex; gap: 8px; flex-wrap: wrap;';
+
+    // Reload Button
     const btn = document.createElement('button');
     btn.id = 'hw24-reload-btn';
     btn.type = 'button';
     btn.textContent = '🔄 Meta & Kalkulation neu laden';
     btn.style.cssText = `
-      margin: 8px 0;
       padding: 6px 12px;
       font-size: 12px;
       background: #3b82f6;
@@ -749,7 +802,28 @@
       btn.textContent = '🔄 Meta & Kalkulation neu laden';
     };
 
-    tbl.parentElement?.insertBefore(btn, tbl);
+    // Toggle Button für Meta-Daten
+    const toggleBtn = document.createElement('button');
+    toggleBtn.id = 'hw24-meta-toggle';
+    toggleBtn.type = 'button';
+    toggleBtn.textContent = '👁 Meta ausblenden';
+    toggleBtn.style.cssText = `
+      padding: 6px 12px;
+      font-size: 12px;
+      background: #6b7280;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    `;
+
+    toggleBtn.onmouseenter = () => toggleBtn.style.background = '#4b5563';
+    toggleBtn.onmouseleave = () => toggleBtn.style.background = '#6b7280';
+    toggleBtn.onclick = toggleMetaVisibility;
+
+    btnContainer.appendChild(btn);
+    btnContainer.appendChild(toggleBtn);
+    tbl.parentElement?.insertBefore(btnContainer, tbl);
   }
 
   /* ===============================
@@ -850,10 +924,7 @@
         tr.querySelector('a.productsPopupLink') ||
         tr.querySelector('a.fieldValue[href*="module=Products"]')
       );
-      if (validRows.length > 0) {
-        console.log('[HW24] Found rows with selector:', sel, validRows.length);
-        return validRows;
-      }
+      if (validRows.length > 0) return validRows;
     }
 
     // Fallback: Alle Zeilen die einen Produkt-Link enthalten
@@ -862,32 +933,22 @@
       tr.querySelector('a[href*="module=Products"]') ||
       tr.querySelector('a[href*="module=Services"]')
     );
-    if (productRows.length > 0) {
-      console.log('[HW24] Fallback: Found product rows:', productRows.length);
-      return productRows;
-    }
+    if (productRows.length > 0) return productRows;
 
     return [];
   }
 
   async function processDetail() {
     const tbl = findLineItemTable();
-    if (!tbl) {
-      console.log('[HW24] LineItem table not found');
-      return;
-    }
+    if (!tbl) return;
 
     const rows = findLineItemRows(tbl);
-    console.log('[HW24] Found', rows.length, 'line item rows');
 
     for (const tr of rows) {
       const rn = tr.getAttribute('data-row-num') || tr.id?.replace('row', '') || '';
 
       const url = extractProductUrlFromRow(tr);
-      if (!url) {
-        console.log('[HW24] No product URL found for row', rn);
-        continue;
-      }
+      if (!url) continue;
 
       // Finde die Produktnamen-Zelle
       const a = tr.querySelector(`a[href*="module=Products"]`) ||
@@ -898,10 +959,7 @@
 
       const meta = await fetchMeta(url);
       const info = ensureInfo(td);
-      renderInfo(info, meta);
-
-      // Badge (falls description irgendwo vorhanden ist)
-      refreshBadgeForRow(tr);
+      renderInfo(info, meta, tr, rn);
     }
   }
 
@@ -947,29 +1005,15 @@
   }
 
   if (isDetail) {
-    // Debug: Zeige alle Tabellen und mögliche LineItem-Container
-    console.log('[HW24] Detail View Debug:');
-    console.log('[HW24] All tables:', document.querySelectorAll('table'));
-    console.log('[HW24] #lineItemTab:', document.querySelector('#lineItemTab'));
-    console.log('[HW24] Tables with "line" in id:', document.querySelectorAll('table[id*="line"], table[id*="Line"], [id*="lineItem"]'));
-    console.log('[HW24] Product links:', document.querySelectorAll('a[href*="module=Products"]'));
-
-    // Warte auf AJAX-geladene LineItem-Tabelle
     const initDetail = async () => {
       let tbl = findLineItemTable();
-      console.log('[HW24] findLineItemTable result:', tbl);
 
       // Falls Tabelle noch nicht da, warte darauf
       if (!tbl) {
-        console.log('[HW24] Waiting for lineItem table...');
         tbl = await waitForElement('#lineItemTab, .lineItemsTable, .lineItemTab, [id*="lineItem"], .inventoryTable', 5000);
-        console.log('[HW24] After wait, found:', tbl);
       }
 
       if (tbl) {
-        const rows = findLineItemRows(tbl);
-        console.log('[HW24] Found rows:', rows.length, rows);
-
         await processDetail();
         injectTotalsPanel();
         injectReloadButton();
@@ -980,14 +1024,6 @@
         }, 700);
 
         new MutationObserver(rerunD).observe(tbl, { childList: true, subtree: true });
-      } else {
-        console.log('[HW24] LineItem table not found after waiting');
-        // Fallback: Zeige alle Tabellen
-        console.log('[HW24] Fallback - all tables on page:', [...document.querySelectorAll('table')].map(t => ({
-          id: t.id,
-          class: t.className,
-          rows: t.rows?.length
-        })));
       }
     };
 
