@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.4.1
-// @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations
+// @version      1.5.0
+// @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -848,6 +848,333 @@
   }
 
   /* ===============================
+     TAX / REVERSE CHARGE VALIDATION
+     =============================== */
+
+  // EU-Länder Liste (für Tax Region Bestimmung)
+  const EU_COUNTRIES = [
+    'austria', 'österreich', 'belgium', 'belgien', 'bulgaria', 'bulgarien',
+    'croatia', 'kroatien', 'cyprus', 'zypern', 'czech republic', 'tschechien',
+    'denmark', 'dänemark', 'estonia', 'estland', 'finland', 'finnland',
+    'france', 'frankreich', 'germany', 'deutschland', 'greece', 'griechenland',
+    'hungary', 'ungarn', 'ireland', 'irland', 'italy', 'italien',
+    'latvia', 'lettland', 'lithuania', 'litauen', 'luxembourg', 'luxemburg',
+    'malta', 'netherlands', 'niederlande', 'poland', 'polen', 'portugal',
+    'romania', 'rumänien', 'slovakia', 'slowakei', 'slovenia', 'slowenien',
+    'spain', 'spanien', 'sweden', 'schweden'
+  ];
+
+  function isAustria(country) {
+    const c = S(country).toLowerCase();
+    return c === 'austria' || c === 'österreich' || c === 'at';
+  }
+
+  function isGermany(country) {
+    const c = S(country).toLowerCase();
+    return c === 'germany' || c === 'deutschland' || c === 'de';
+  }
+
+  function isEUCountry(country) {
+    const c = S(country).toLowerCase();
+    return EU_COUNTRIES.some(eu => c.includes(eu) || eu.includes(c));
+  }
+
+  function getFieldValue(fieldName) {
+    // Versuche verschiedene Selektoren
+    const el =
+      document.querySelector(`[name="${fieldName}"]`) ||
+      document.querySelector(`#${fieldName}`) ||
+      document.querySelector(`select[name="${fieldName}"]`) ||
+      document.querySelector(`input[name="${fieldName}"]`);
+    if (el) {
+      if (el.type === 'checkbox') return el.checked;
+      return el.value;
+    }
+    // Fallback: data-name Attribut
+    const el2 = document.querySelector(`[data-name="${fieldName}"]`);
+    return el2?.value || el2?.textContent || '';
+  }
+
+  function setFieldValue(fieldName, value) {
+    const el =
+      document.querySelector(`[name="${fieldName}"]`) ||
+      document.querySelector(`#${fieldName}`) ||
+      document.querySelector(`select[name="${fieldName}"]`) ||
+      document.querySelector(`input[name="${fieldName}"]`);
+    if (!el) return false;
+
+    if (el.type === 'checkbox') {
+      el.checked = !!value;
+    } else {
+      el.value = value;
+    }
+    // Trigger change event
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  function getBillingCountry() {
+    return getFieldValue('bill_country') ||
+           getFieldValue('billing_country') ||
+           getFieldValue('ship_country') ||
+           '';
+  }
+
+  function getTaxRegion() {
+    return getFieldValue('region') ||
+           getFieldValue('tax_region') ||
+           getFieldValue('taxregion') ||
+           '';
+  }
+
+  function setTaxRegion(value) {
+    return setFieldValue('region', value) ||
+           setFieldValue('tax_region', value) ||
+           setFieldValue('taxregion', value);
+  }
+
+  function getReverseCharge() {
+    const el =
+      document.querySelector('[name="cf_potentials_reverse_charge"]') ||
+      document.querySelector('[name="reverse_charge"]') ||
+      document.querySelector('[name*="reverse_charge"]') ||
+      document.querySelector('input[type="checkbox"][name*="reverse"]');
+    return el?.checked || false;
+  }
+
+  function setReverseCharge(value) {
+    const el =
+      document.querySelector('[name="cf_potentials_reverse_charge"]') ||
+      document.querySelector('[name="reverse_charge"]') ||
+      document.querySelector('[name*="reverse_charge"]') ||
+      document.querySelector('input[type="checkbox"][name*="reverse"]');
+    if (el) {
+      el.checked = !!value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+    return false;
+  }
+
+  function getTerms() {
+    return getFieldValue('terms_conditions') ||
+           getFieldValue('sostatus') ||
+           getFieldValue('terms') ||
+           '';
+  }
+
+  function validateTaxSettings() {
+    if (!isEdit) return null;
+
+    const billingCountry = getBillingCountry();
+    const taxRegion = getTaxRegion();
+    const reverseCharge = getReverseCharge();
+    const terms = getTerms();
+    const issues = [];
+
+    // Für Quotes, SalesOrder, Invoice
+    if (['Quotes', 'SalesOrder', 'Invoice'].includes(currentModule)) {
+      if (isAustria(billingCountry)) {
+        // Reverse Charge darf nicht aktiv sein
+        if (reverseCharge) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Reverse Charge ist aktiviert, aber Billing Country ist Österreich!',
+            fix: () => setReverseCharge(false),
+            fixLabel: 'Reverse Charge deaktivieren'
+          });
+        }
+        // Tax Region muss Austria sein
+        if (taxRegion && !taxRegion.toLowerCase().includes('austria')) {
+          issues.push({
+            type: 'warning',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Österreich.`,
+            fix: () => setTaxRegion('Austria'),
+            fixLabel: 'Tax Region → Austria'
+          });
+        }
+      }
+    }
+
+    // Für PurchaseOrder
+    if (currentModule === 'PurchaseOrder') {
+      const termsLower = terms.toLowerCase();
+
+      if (isAustria(billingCountry)) {
+        // Österreich → Tax Region Austria
+        if (taxRegion && !taxRegion.toLowerCase().includes('austria')) {
+          issues.push({
+            type: 'warning',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Österreich.`,
+            fix: () => setTaxRegion('Austria'),
+            fixLabel: 'Tax Region → Austria'
+          });
+        }
+      } else if (isGermany(billingCountry)) {
+        if (termsLower.includes('wartung')) {
+          // Deutschland + Wartung → EU (nicht Austria)
+          if (taxRegion && taxRegion.toLowerCase().includes('austria')) {
+            issues.push({
+              type: 'error',
+              message: '⚠️ Tax Region ist "Austria", aber Billing Country ist Deutschland mit Terms "Wartung"!',
+              fix: () => setTaxRegion('EU'),
+              fixLabel: 'Tax Region → EU'
+            });
+          }
+        } else if (termsLower.includes('handel')) {
+          // Deutschland + Handel → Germany
+          if (taxRegion && !taxRegion.toLowerCase().includes('germany')) {
+            issues.push({
+              type: 'warning',
+              message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany" sein für Deutschland + Handel.`,
+              fix: () => setTaxRegion('Germany'),
+              fixLabel: 'Tax Region → Germany'
+            });
+          }
+        }
+      } else if (billingCountry) {
+        // Andere Länder
+        if (termsLower.includes('wartung')) {
+          const targetRegion = isEUCountry(billingCountry) ? 'EU' : 'Non-EU';
+          if (taxRegion && taxRegion.toLowerCase().includes('austria')) {
+            issues.push({
+              type: 'warning',
+              message: `⚠️ Tax Region ist "Austria", sollte aber "${targetRegion}" sein für ${billingCountry}.`,
+              fix: () => setTaxRegion(targetRegion),
+              fixLabel: `Tax Region → ${targetRegion}`
+            });
+          }
+        }
+      }
+    }
+
+    return issues;
+  }
+
+  function injectTaxValidationPanel() {
+    if (!isEdit) return;
+
+    // Entferne existierendes Panel
+    document.getElementById('hw24-tax-panel')?.remove();
+
+    const issues = validateTaxSettings();
+    if (!issues || issues.length === 0) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'hw24-tax-panel';
+    panel.style.cssText = `
+      margin: 12px 0;
+      padding: 10px 14px;
+      background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+      border: 1px solid #fca5a5;
+      border-left: 4px solid #dc2626;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.6;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    `;
+
+    let html = `
+      <div style="font-weight:bold;font-size:13px;margin-bottom:8px;color:#991b1b;">
+        🚨 Tax / Reverse Charge Validierung
+      </div>
+    `;
+
+    issues.forEach((issue, idx) => {
+      const bgColor = issue.type === 'error' ? '#fecaca' : '#fef3c7';
+      const borderColor = issue.type === 'error' ? '#f87171' : '#fbbf24';
+      html += `
+        <div style="
+          background: ${bgColor};
+          border: 1px solid ${borderColor};
+          border-radius: 4px;
+          padding: 8px;
+          margin-bottom: 6px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
+        ">
+          <span>${issue.message}</span>
+          <button type="button" class="hw24-tax-fix" data-idx="${idx}" style="
+            padding: 4px 10px;
+            font-size: 11px;
+            background: #16a34a;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+          ">✓ ${issue.fixLabel}</button>
+        </div>
+      `;
+    });
+
+    // "Alle korrigieren" Button wenn mehrere Issues
+    if (issues.length > 1) {
+      html += `
+        <button type="button" id="hw24-tax-fix-all" style="
+          margin-top: 6px;
+          padding: 6px 12px;
+          font-size: 12px;
+          background: #16a34a;
+          color: #fff;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+        ">✓ Alle korrigieren</button>
+      `;
+    }
+
+    panel.innerHTML = html;
+
+    // Event Listener für Fix-Buttons
+    panel.querySelectorAll('.hw24-tax-fix').forEach(btn => {
+      btn.onclick = () => {
+        const idx = parseInt(btn.dataset.idx);
+        if (issues[idx]?.fix) {
+          issues[idx].fix();
+          injectTaxValidationPanel(); // Refresh
+        }
+      };
+    });
+
+    const fixAllBtn = panel.querySelector('#hw24-tax-fix-all');
+    if (fixAllBtn) {
+      fixAllBtn.onclick = () => {
+        issues.forEach(issue => issue.fix?.());
+        injectTaxValidationPanel(); // Refresh
+      };
+    }
+
+    // Einfügen am Anfang des Formulars
+    const form = document.querySelector('form') || document.querySelector('.contents');
+    if (form) {
+      form.insertBefore(panel, form.firstChild);
+    }
+  }
+
+  // Beobachte Änderungen an relevanten Feldern
+  function setupTaxValidationObserver() {
+    if (!isEdit) return;
+
+    const fieldsToWatch = [
+      '[name="bill_country"]', '[name="billing_country"]',
+      '[name="region"]', '[name="tax_region"]',
+      '[name*="reverse_charge"]',
+      '[name="terms_conditions"]', '[name="terms"]'
+    ];
+
+    fieldsToWatch.forEach(sel => {
+      const el = document.querySelector(sel);
+      if (el) {
+        el.addEventListener('change', debounce(injectTaxValidationPanel, 300));
+      }
+    });
+  }
+
+  /* ===============================
      CORE (EDIT)
      =============================== */
 
@@ -1015,6 +1342,8 @@
     await processEdit();
     injectTotalsPanel();
     injectReloadButton();
+    injectTaxValidationPanel();
+    setupTaxValidationObserver();
 
     const rerun = debounce(async () => {
       await processEdit();
