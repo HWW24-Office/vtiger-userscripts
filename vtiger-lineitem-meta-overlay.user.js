@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.5.5
+// @version      1.6.0
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -1090,6 +1090,26 @@
           });
         }
       }
+
+      // Reverse Charge + Tax Region Austria = NICHT erlaubt
+      if (reverseCharge && isAustriaTaxRegion) {
+        issues.push({
+          type: 'error',
+          message: '⚠️ Reverse Charge ist aktiviert, aber Tax Region ist Austria! Das ist nicht erlaubt.',
+          fix: () => setReverseCharge(false),
+          fixLabel: 'Reverse Charge deaktivieren'
+        });
+      }
+
+      // Reverse Charge + Tax Region Germany = NICHT erlaubt
+      if (reverseCharge && isGermanyTaxRegion) {
+        issues.push({
+          type: 'error',
+          message: '⚠️ Reverse Charge ist aktiviert, aber Tax Region ist Germany! Das ist nicht erlaubt.',
+          fix: () => setReverseCharge(false),
+          fixLabel: 'Reverse Charge deaktivieren'
+        });
+      }
     }
 
     // Für PurchaseOrder
@@ -1147,139 +1167,196 @@
     return issues;
   }
 
-  function injectTaxValidationPanel() {
-    if (!isEdit) return;
+  // Popup für Tax-Validierung beim Speichern
+  function showTaxValidationPopup(issues, onFix, onIgnore) {
+    // Entferne existierendes Popup
+    document.getElementById('hw24-tax-popup-overlay')?.remove();
 
-    // Entferne existierendes Panel
-    document.getElementById('hw24-tax-panel')?.remove();
-
-    const issues = validateTaxSettings();
-    if (!issues || issues.length === 0) return;
-
-    const panel = document.createElement('div');
-    panel.id = 'hw24-tax-panel';
-    panel.style.cssText = `
-      margin: 12px 0;
-      padding: 10px 14px;
-      background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-      border: 1px solid #fca5a5;
-      border-left: 4px solid #dc2626;
-      border-radius: 8px;
-      font-size: 12px;
-      line-height: 1.6;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    const overlay = document.createElement('div');
+    overlay.id = 'hw24-tax-popup-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     `;
 
-    let html = `
-      <div style="font-weight:bold;font-size:13px;margin-bottom:8px;color:#991b1b;">
-        🚨 Tax / Reverse Charge Validierung
-      </div>
+    const popup = document.createElement('div');
+    popup.style.cssText = `
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
     `;
 
-    issues.forEach((issue, idx) => {
-      const bgColor = issue.type === 'error' ? '#fecaca' : '#fef3c7';
+    let issuesHtml = '';
+    issues.forEach((issue) => {
+      const bgColor = issue.type === 'error' ? '#fef2f2' : '#fef3c7';
       const borderColor = issue.type === 'error' ? '#f87171' : '#fbbf24';
-      html += `
+      const icon = issue.type === 'error' ? '🔴' : '🟡';
+      issuesHtml += `
         <div style="
           background: ${bgColor};
           border: 1px solid ${borderColor};
-          border-radius: 4px;
-          padding: 8px;
-          margin-bottom: 6px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 8px;
+          border-radius: 6px;
+          padding: 10px 12px;
+          margin-bottom: 8px;
+          font-size: 13px;
         ">
-          <span>${issue.message}</span>
-          <button type="button" class="hw24-tax-fix" data-idx="${idx}" style="
-            padding: 4px 10px;
-            font-size: 11px;
-            background: #16a34a;
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            white-space: nowrap;
-          ">✓ ${issue.fixLabel}</button>
+          ${icon} ${issue.message}
         </div>
       `;
     });
 
-    // "Alle korrigieren" Button wenn mehrere Issues
-    if (issues.length > 1) {
-      html += `
-        <button type="button" id="hw24-tax-fix-all" style="
-          margin-top: 6px;
-          padding: 6px 12px;
-          font-size: 12px;
-          background: #16a34a;
-          color: #fff;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-        ">✓ Alle korrigieren</button>
-      `;
-    }
+    popup.innerHTML = `
+      <div style="
+        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+        color: #fff;
+        padding: 16px 20px;
+        border-radius: 12px 12px 0 0;
+        font-weight: bold;
+        font-size: 15px;
+      ">
+        🚨 Tax / Reverse Charge Warnung
+      </div>
+      <div style="padding: 20px;">
+        <p style="margin: 0 0 16px 0; color: #374151; font-size: 13px;">
+          Es wurden folgende Probleme gefunden:
+        </p>
+        ${issuesHtml}
+        <div style="
+          display: flex;
+          gap: 12px;
+          margin-top: 20px;
+          justify-content: flex-end;
+        ">
+          <button type="button" id="hw24-popup-ignore" style="
+            padding: 10px 20px;
+            font-size: 13px;
+            background: #6b7280;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+          ">Ignorieren & Speichern</button>
+          <button type="button" id="hw24-popup-fix" style="
+            padding: 10px 20px;
+            font-size: 13px;
+            background: #16a34a;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+          ">✓ Korrigieren & Speichern</button>
+        </div>
+      </div>
+    `;
 
-    panel.innerHTML = html;
+    overlay.appendChild(popup);
+    document.body.appendChild(overlay);
 
-    // Event Listener für Fix-Buttons
-    panel.querySelectorAll('.hw24-tax-fix').forEach(btn => {
-      btn.onclick = () => {
-        const idx = parseInt(btn.dataset.idx);
-        if (issues[idx]?.fix) {
-          issues[idx].fix();
-          injectTaxValidationPanel(); // Refresh
-        }
-      };
-    });
+    // Event Listener
+    document.getElementById('hw24-popup-fix').onclick = () => {
+      overlay.remove();
+      onFix();
+    };
 
-    const fixAllBtn = panel.querySelector('#hw24-tax-fix-all');
-    if (fixAllBtn) {
-      fixAllBtn.onclick = () => {
-        issues.forEach(issue => issue.fix?.());
-        injectTaxValidationPanel(); // Refresh
-      };
-    }
+    document.getElementById('hw24-popup-ignore').onclick = () => {
+      overlay.remove();
+      onIgnore();
+    };
 
-    // Einfügen am Anfang des Formulars
-    const form = document.querySelector('form') || document.querySelector('.contents');
-    if (form) {
-      form.insertBefore(panel, form.firstChild);
-    }
+    // ESC zum Schließen (ohne Speichern)
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
   }
 
-  // Beobachte Änderungen an relevanten Feldern
-  function setupTaxValidationObserver() {
-    if (!isEdit) return;
+  // Save-Button Interceptor
+  let originalSaveHandler = null;
+  let saveInterceptorInstalled = false;
 
-    const fieldsToWatch = [
-      '[name="bill_country"]',
-      '[data-fieldname="bill_country"]',
-      '#region_id',
-      '[name="cf_924"]',  // Quote Reverse Charge
-      '[name="cf_928"]',  // Sales Order Reverse Charge
-      '[name="cf_876"]',  // Invoice Reverse Charge
-      '[name="subject"]',
-      '[data-fieldname="subject"]'
-    ];
+  function interceptSaveButton() {
+    if (!isEdit || saveInterceptorInstalled) return;
 
-    fieldsToWatch.forEach(sel => {
-      const el = document.querySelector(sel);
-      if (el) {
-        el.addEventListener('change', debounce(injectTaxValidationPanel, 300));
-        // Auch auf input-Event hören für Textfelder
-        if (el.tagName === 'INPUT' && el.type === 'text') {
-          el.addEventListener('input', debounce(injectTaxValidationPanel, 500));
+    // Finde Save-Buttons
+    const saveButtons = document.querySelectorAll(
+      'button[name="saveButton"], ' +
+      'input[name="saveButton"], ' +
+      'button.btn-success[type="submit"], ' +
+      '[data-action="Save"], ' +
+      '.saveButton, ' +
+      'button[type="submit"]'
+    );
+
+    saveButtons.forEach(btn => {
+      // Clone und ersetze den Button, um bestehende Event Listener zu entfernen
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode?.replaceChild(newBtn, btn);
+
+      newBtn.addEventListener('click', function(e) {
+        const issues = validateTaxSettings();
+
+        if (issues && issues.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          showTaxValidationPopup(
+            issues,
+            // onFix
+            () => {
+              issues.forEach(issue => issue.fix?.());
+              // Nach Fix speichern
+              setTimeout(() => triggerSave(), 100);
+            },
+            // onIgnore
+            () => {
+              // Direkt speichern ohne Fix
+              triggerSave();
+            }
+          );
+
+          return false;
         }
-      }
+      }, true); // useCapture = true für höchste Priorität
     });
 
-    // Select2 Change Event für Tax Region
-    if (typeof jQuery !== 'undefined') {
-      jQuery('#region_id').on('change', debounce(injectTaxValidationPanel, 300));
+    saveInterceptorInstalled = true;
+  }
+
+  function triggerSave() {
+    // Temporär den Interceptor deaktivieren
+    saveInterceptorInstalled = false;
+
+    // Finde und klicke den Save-Button
+    const saveBtn = document.querySelector(
+      'button[name="saveButton"], ' +
+      'input[name="saveButton"], ' +
+      'button.btn-success[type="submit"], ' +
+      '.saveButton'
+    );
+
+    if (saveBtn) {
+      // Erstelle einen neuen Click ohne unseren Interceptor
+      const form = saveBtn.closest('form');
+      if (form) {
+        form.submit();
+      } else {
+        saveBtn.click();
+      }
     }
   }
 
@@ -1451,8 +1528,7 @@
     await processEdit();
     injectTotalsPanel();
     injectReloadButton();
-    injectTaxValidationPanel();
-    setupTaxValidationObserver();
+    interceptSaveButton();
 
     const rerun = debounce(async () => {
       await processEdit();
