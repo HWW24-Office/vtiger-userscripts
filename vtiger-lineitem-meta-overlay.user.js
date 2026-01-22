@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.5.4
+// @version      1.5.5
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -969,21 +969,25 @@
   }
 
   function findReverseChargeCheckbox() {
-    // cf_924 ist das Reverse Charge Feld in VTiger
-    // Verschiedene mögliche Selektoren
-    const selectors = [
-      'input[type="checkbox"][name="cf_924"]',
-      'input[name="cf_924"]',
-      'input[type="checkbox"][data-fieldname="cf_924"]',
-      '[data-name="cf_924"]',
-      'input[type="checkbox"][name*="reverse_charge"]',
-      'input[type="checkbox"][name*="reverse"]'
-    ];
+    // Reverse Charge Custom Field IDs je nach Modul:
+    // - Quote: cf_924
+    // - Sales Order: cf_928
+    // - Invoice: cf_876
+    const reverseChargeFields = ['cf_924', 'cf_928', 'cf_876'];
 
-    for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (el && (el.type === 'checkbox' || el.type === 'hidden')) {
-        return el;
+    for (const fieldName of reverseChargeFields) {
+      const selectors = [
+        `input[type="checkbox"][name="${fieldName}"]`,
+        `input[name="${fieldName}"]`,
+        `input[type="checkbox"][data-fieldname="${fieldName}"]`,
+        `[data-name="${fieldName}"]`
+      ];
+
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el && (el.type === 'checkbox' || el.type === 'hidden')) {
+          return el;
+        }
       }
     }
 
@@ -1255,8 +1259,9 @@
       '[name="bill_country"]',
       '[data-fieldname="bill_country"]',
       '#region_id',
-      '[name="cf_924"]',
-      '[name*="reverse_charge"]',
+      '[name="cf_924"]',  // Quote Reverse Charge
+      '[name="cf_928"]',  // Sales Order Reverse Charge
+      '[name="cf_876"]',  // Invoice Reverse Charge
       '[name="subject"]',
       '[data-fieldname="subject"]'
     ];
