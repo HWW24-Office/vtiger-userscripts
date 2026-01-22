@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.5.0
+// @version      1.5.1
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -956,11 +956,26 @@
     return false;
   }
 
-  function getTerms() {
-    return getFieldValue('terms_conditions') ||
-           getFieldValue('sostatus') ||
-           getFieldValue('terms') ||
+  function getSubject() {
+    return getFieldValue('subject') ||
+           getFieldValue('quotename') ||
+           getFieldValue('salesorder_no') ||
+           getFieldValue('invoice_no') ||
+           getFieldValue('purchaseorder_no') ||
            '';
+  }
+
+  // Subject-Präfix bestimmt den Typ: W/WV=Wartung, H=Handel, M=Managed Service, R=Reparatur
+  function getSubjectType() {
+    const subject = S(getSubject()).toUpperCase();
+    if (!subject) return '';
+
+    if (subject.startsWith('WV')) return 'wartung';
+    if (subject.startsWith('W')) return 'wartung';
+    if (subject.startsWith('H')) return 'handel';
+    if (subject.startsWith('M')) return 'managed';
+    if (subject.startsWith('R')) return 'reparatur';
+    return '';
   }
 
   function validateTaxSettings() {
@@ -969,7 +984,7 @@
     const billingCountry = getBillingCountry();
     const taxRegion = getTaxRegion();
     const reverseCharge = getReverseCharge();
-    const terms = getTerms();
+    const subjectType = getSubjectType(); // W/WV=wartung, H=handel, M=managed, R=reparatur
     const issues = [];
 
     // Für Quotes, SalesOrder, Invoice
@@ -998,8 +1013,6 @@
 
     // Für PurchaseOrder
     if (currentModule === 'PurchaseOrder') {
-      const termsLower = terms.toLowerCase();
-
       if (isAustria(billingCountry)) {
         // Österreich → Tax Region Austria
         if (taxRegion && !taxRegion.toLowerCase().includes('austria')) {
@@ -1011,30 +1024,30 @@
           });
         }
       } else if (isGermany(billingCountry)) {
-        if (termsLower.includes('wartung')) {
-          // Deutschland + Wartung → EU (nicht Austria)
+        if (subjectType === 'wartung') {
+          // Deutschland + Wartung (W/WV) → EU (nicht Austria)
           if (taxRegion && taxRegion.toLowerCase().includes('austria')) {
             issues.push({
               type: 'error',
-              message: '⚠️ Tax Region ist "Austria", aber Billing Country ist Deutschland mit Terms "Wartung"!',
+              message: '⚠️ Tax Region ist "Austria", aber Billing Country ist Deutschland mit Wartung (W/WV)!',
               fix: () => setTaxRegion('EU'),
               fixLabel: 'Tax Region → EU'
             });
           }
-        } else if (termsLower.includes('handel')) {
-          // Deutschland + Handel → Germany
+        } else if (subjectType === 'handel') {
+          // Deutschland + Handel (H) → Germany
           if (taxRegion && !taxRegion.toLowerCase().includes('germany')) {
             issues.push({
               type: 'warning',
-              message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany" sein für Deutschland + Handel.`,
+              message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany" sein für Deutschland + Handel (H).`,
               fix: () => setTaxRegion('Germany'),
               fixLabel: 'Tax Region → Germany'
             });
           }
         }
       } else if (billingCountry) {
-        // Andere Länder
-        if (termsLower.includes('wartung')) {
+        // Andere Länder mit Wartung
+        if (subjectType === 'wartung') {
           const targetRegion = isEUCountry(billingCountry) ? 'EU' : 'Non-EU';
           if (taxRegion && taxRegion.toLowerCase().includes('austria')) {
             issues.push({
@@ -1163,13 +1176,17 @@
       '[name="bill_country"]', '[name="billing_country"]',
       '[name="region"]', '[name="tax_region"]',
       '[name*="reverse_charge"]',
-      '[name="terms_conditions"]', '[name="terms"]'
+      '[name="subject"]', '[name="quotename"]'
     ];
 
     fieldsToWatch.forEach(sel => {
       const el = document.querySelector(sel);
       if (el) {
         el.addEventListener('change', debounce(injectTaxValidationPanel, 300));
+        // Auch auf input-Event hören für Textfelder
+        if (el.tagName === 'INPUT' && el.type === 'text') {
+          el.addEventListener('input', debounce(injectTaxValidationPanel, 500));
+        }
       }
     });
   }
