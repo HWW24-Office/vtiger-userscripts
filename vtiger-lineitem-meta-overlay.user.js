@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.3.2
+// @version      1.3.3
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -536,8 +536,19 @@
      =============================== */
 
   function calculateTotals() {
-    // Verwende die originalen Selektoren die funktioniert haben
-    const rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+    // Edit-Modus: originale Selektoren
+    let rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+
+    // Detail-Modus: Fallback auf lineItemsTable
+    if (rows.length === 0 && isDetail) {
+      const tbl = document.querySelector('table.lineItemsTable') || document.querySelector('.lineItemsTable');
+      if (tbl) {
+        rows = [...tbl.querySelectorAll('tr')].filter(tr =>
+          tr.querySelector('a[href*="module=Products"]') ||
+          tr.querySelector('a[href*="module=Services"]')
+        );
+      }
+    }
 
     let sumPC = 0;
     let sumSelling = 0;
@@ -601,10 +612,15 @@
       document.querySelector('[id$="_netTotal"]') ||
       document.querySelector('.netTotal');
 
-    const tbl = document.querySelector('#lineItemTab');
+    const tbl = document.querySelector('#lineItemTab') ||
+                document.querySelector('table.lineItemsTable') ||
+                document.querySelector('.lineItemsTable');
     const insertTarget = netTotalEl?.closest('tr')?.parentElement || tbl?.parentElement;
 
-    if (!insertTarget) return;
+    if (!insertTarget) {
+      console.log('[HW24] injectTotalsPanel: No insert target found');
+      return;
+    }
 
     const panel = document.createElement('div');
     panel.id = 'hw24-totals-panel';
@@ -695,7 +711,9 @@
   function injectReloadButton() {
     if (document.getElementById('hw24-reload-btn')) return;
 
-    const tbl = document.querySelector('#lineItemTab');
+    const tbl = document.querySelector('#lineItemTab') ||
+                document.querySelector('table.lineItemsTable') ||
+                document.querySelector('.lineItemsTable');
     if (!tbl) return;
 
     const btn = document.createElement('button');
@@ -800,6 +818,8 @@
   function findLineItemTable() {
     // Verschiedene Selektoren für die LineItem-Tabelle
     return document.querySelector('#lineItemTab') ||
+           document.querySelector('table.lineItemsTable') ||
+           document.querySelector('.lineItemsTable') ||
            document.querySelector('.lineItemTab') ||
            document.querySelector('[id*="lineItem"]') ||
            document.querySelector('.detailViewTable table') ||
@@ -817,18 +837,34 @@
       'tr[id^="row"]',
       'tr.listViewEntries',
       'tr[data-row-num]',
-      'tbody tr:not(.listViewContentHeaderValues):not(.norecord)'
+      'tbody tr',
+      'tr'
     ];
 
     for (const sel of selectors) {
       const rows = [...container.querySelectorAll(sel)];
-      // Filter: nur Zeilen mit Produkt-Link
+      // Filter: nur Zeilen mit Produkt-Link (verschiedene Klassen)
       const validRows = rows.filter(tr =>
         tr.querySelector('a[href*="module=Products"]') ||
         tr.querySelector('a[href*="module=Services"]') ||
-        tr.querySelector('a.productsPopupLink')
+        tr.querySelector('a.productsPopupLink') ||
+        tr.querySelector('a.fieldValue[href*="module=Products"]')
       );
-      if (validRows.length > 0) return validRows;
+      if (validRows.length > 0) {
+        console.log('[HW24] Found rows with selector:', sel, validRows.length);
+        return validRows;
+      }
+    }
+
+    // Fallback: Alle Zeilen die einen Produkt-Link enthalten
+    const allRows = [...container.querySelectorAll('tr')];
+    const productRows = allRows.filter(tr =>
+      tr.querySelector('a[href*="module=Products"]') ||
+      tr.querySelector('a[href*="module=Services"]')
+    );
+    if (productRows.length > 0) {
+      console.log('[HW24] Fallback: Found product rows:', productRows.length);
+      return productRows;
     }
 
     return [];
@@ -926,7 +962,7 @@
       // Falls Tabelle noch nicht da, warte darauf
       if (!tbl) {
         console.log('[HW24] Waiting for lineItem table...');
-        tbl = await waitForElement('#lineItemTab, .lineItemTab, [id*="lineItem"], .inventoryTable, table', 5000);
+        tbl = await waitForElement('#lineItemTab, .lineItemsTable, .lineItemTab, [id*="lineItem"], .inventoryTable', 5000);
         console.log('[HW24] After wait, found:', tbl);
       }
 
