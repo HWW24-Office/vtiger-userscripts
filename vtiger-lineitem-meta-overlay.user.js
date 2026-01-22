@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.2.5
-// @description  Show product number (PROxxxxx), audit maintenance descriptions and enforce description structure
+// @version      1.3.0
+// @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -532,64 +532,179 @@
   }
 
   /* ===============================
-     DETAIL VIEW TOTALS (MARGIN)
+     TOTALS PANEL (EDIT + DETAIL)
      =============================== */
 
-  function injectDetailTotals() {
-    if (!isDetail) return;
-    if (document.getElementById('hw24-detail-totals')) return;
-
-    const netTotalEl = document.getElementById('netTotal'); // Items Total position
-    if (!netTotalEl) return;
-
+  function calculateTotals() {
     const rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+
     let sumPC = 0;
+    let sumSelling = 0;
 
     rows.forEach(tr => {
       const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
-      const qty = getQuantity(tr, rn) || 0;
-      const pc = getPurchaseCostPerUnit(tr, rn);
-      // je nach VTiger ist purchaseCost pro unit oder total — wir summieren konservativ pc*qty
-      sumPC += pc * (qty || 1);
+      const qty = getQuantity(tr, rn) || 1;
+      const pcPerUnit = getPurchaseCostPerUnit(tr, rn);
+      const sellingPerUnit = getSellingPricePerUnit(tr, rn);
+
+      sumPC += pcPerUnit * qty;
+      sumSelling += sellingPerUnit * qty;
     });
 
-    const itemsTotal = toNum(netTotalEl.textContent);
-    const discountEl = document.getElementById('discountTotal_final');
-    const overallDiscount = toNum(discountEl?.textContent);
+    // Items Total aus dem DOM
+    const netTotalEl =
+      document.getElementById('netTotal') ||
+      document.querySelector('[id$="_netTotal"]') ||
+      document.querySelector('.netTotal');
+    const itemsTotal = netTotalEl ? toNum(netTotalEl.textContent || netTotalEl.value) : sumSelling;
 
+    // Overall Discount
+    const discountEl =
+      document.getElementById('discountTotal_final') ||
+      document.querySelector('[id$="_discountTotal_final"]') ||
+      document.querySelector('.discountTotal_final');
+    const overallDiscount = toNum(discountEl?.textContent || discountEl?.value);
+
+    // Margin vor Discount
+    const marginBeforeDiscount = itemsTotal - sumPC;
+    const marginBeforeDiscountPct = sumPC ? (marginBeforeDiscount / sumPC * 100) : 0;
+
+    // Effective Total nach Discount
     const effectiveTotal = itemsTotal - overallDiscount;
-    const marginAbs = effectiveTotal - sumPC;
-    const marginPct = sumPC ? (marginAbs / sumPC * 100) : 0;
 
-    const box = document.createElement('div');
-    box.id = 'hw24-detail-totals';
-    box.style.cssText = 'margin-top:6px;font-weight:bold;text-align:right;font-size:12px;line-height:1.4';
-    box.innerHTML = `
-      <div>Purchase Cost Sum: ${sumPC ? sumPC.toFixed(2) : '—'}</div>
-      <div>Margin: ${sumPC ? marginAbs.toFixed(2) : '—'} ${sumPC ? `(${marginPct.toFixed(1)}%)` : ''}</div>
-    `;
+    // Margin nach Discount
+    const marginAfterDiscount = effectiveTotal - sumPC;
+    const marginAfterDiscountPct = sumPC ? (marginAfterDiscount / sumPC * 100) : 0;
 
-    netTotalEl.parentElement?.appendChild(box);
+    return {
+      sumPC,
+      itemsTotal,
+      overallDiscount,
+      marginBeforeDiscount,
+      marginBeforeDiscountPct,
+      effectiveTotal,
+      marginAfterDiscount,
+      marginAfterDiscountPct
+    };
   }
 
-  function injectDetailMetaReloadButton() {
-    if (!isDetail) return;
-    if (document.getElementById('hw24-detail-reload')) return;
+  function injectTotalsPanel() {
+    // Entferne existierendes Panel
+    document.getElementById('hw24-totals-panel')?.remove();
+
+    const totals = calculateTotals();
+
+    // Finde Einfügepunkt
+    const netTotalEl =
+      document.getElementById('netTotal') ||
+      document.querySelector('[id$="_netTotal"]') ||
+      document.querySelector('.netTotal');
+
+    const tbl = document.querySelector('#lineItemTab');
+    const insertTarget = netTotalEl?.closest('tr')?.parentElement || tbl?.parentElement;
+
+    if (!insertTarget) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'hw24-totals-panel';
+    panel.style.cssText = `
+      margin: 12px 0;
+      padding: 10px 14px;
+      background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.6;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    `;
+
+    const formatNum = n => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formatPct = n => n.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+    const marginColor = totals.marginAfterDiscount >= 0 ? '#16a34a' : '#dc2626';
+    const marginBeforeColor = totals.marginBeforeDiscount >= 0 ? '#16a34a' : '#dc2626';
+
+    panel.innerHTML = `
+      <div style="font-weight:bold;font-size:13px;margin-bottom:8px;color:#1e293b;border-bottom:1px solid #cbd5e1;padding-bottom:6px;">
+        📊 Kalkulation
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <tr>
+          <td style="padding:3px 0;color:#64748b;">Purchase Cost (Summe):</td>
+          <td style="padding:3px 0;text-align:right;font-weight:600;">${totals.sumPC ? formatNum(totals.sumPC) + ' €' : '—'}</td>
+        </tr>
+        <tr>
+          <td style="padding:3px 0;color:#64748b;">Items Total:</td>
+          <td style="padding:3px 0;text-align:right;font-weight:600;">${formatNum(totals.itemsTotal)} €</td>
+        </tr>
+        <tr style="border-top:1px dashed #cbd5e1;">
+          <td style="padding:6px 0 3px;color:#475569;font-weight:500;">Marge (vor Discount):</td>
+          <td style="padding:6px 0 3px;text-align:right;font-weight:bold;color:${marginBeforeColor};">
+            ${totals.sumPC ? formatNum(totals.marginBeforeDiscount) + ' €' : '—'}
+            ${totals.sumPC ? '<span style="font-weight:normal;color:#64748b;"> (' + formatPct(totals.marginBeforeDiscountPct) + '%)</span>' : ''}
+          </td>
+        </tr>
+        ${totals.overallDiscount ? `
+        <tr>
+          <td style="padding:3px 0;color:#64748b;">Overall Discount:</td>
+          <td style="padding:3px 0;text-align:right;font-weight:600;color:#dc2626;">- ${formatNum(totals.overallDiscount)} €</td>
+        </tr>
+        ` : ''}
+        <tr style="background:#e2e8f0;border-radius:4px;">
+          <td style="padding:6px 8px;color:#1e293b;font-weight:600;">Marge (nach Discount):</td>
+          <td style="padding:6px 8px;text-align:right;font-weight:bold;font-size:13px;color:${marginColor};">
+            ${totals.sumPC ? formatNum(totals.marginAfterDiscount) + ' €' : '—'}
+            ${totals.sumPC ? '<span style="font-weight:normal;color:#64748b;"> (' + formatPct(totals.marginAfterDiscountPct) + '%)</span>' : ''}
+          </td>
+        </tr>
+      </table>
+    `;
+
+    // Einfügen nach der lineItemTab Tabelle
+    if (tbl?.parentElement) {
+      tbl.parentElement.insertBefore(panel, tbl.nextSibling);
+    } else {
+      insertTarget.appendChild(panel);
+    }
+  }
+
+  function injectReloadButton() {
+    if (document.getElementById('hw24-reload-btn')) return;
 
     const tbl = document.querySelector('#lineItemTab');
     if (!tbl) return;
 
     const btn = document.createElement('button');
-    btn.id = 'hw24-detail-reload';
+    btn.id = 'hw24-reload-btn';
     btn.type = 'button';
-    btn.textContent = 'Meta neu laden';
-    btn.style.cssText = 'margin:8px 0;font-size:12px';
+    btn.textContent = '🔄 Meta & Kalkulation neu laden';
+    btn.style.cssText = `
+      margin: 8px 0;
+      padding: 6px 12px;
+      font-size: 12px;
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    `;
+
+    btn.onmouseenter = () => btn.style.background = '#2563eb';
+    btn.onmouseleave = () => btn.style.background = '#3b82f6';
 
     btn.onclick = async () => {
-      await processDetail();
-      // Totals ggf. neu berechnen
-      document.getElementById('hw24-detail-totals')?.remove();
-      injectDetailTotals();
+      btn.disabled = true;
+      btn.textContent = '⏳ Laden...';
+
+      if (isEdit) {
+        await processEdit();
+      } else if (isDetail) {
+        await processDetail();
+      }
+      injectTotalsPanel();
+
+      btn.disabled = false;
+      btn.textContent = '🔄 Meta & Kalkulation neu laden';
     };
 
     tbl.parentElement?.insertBefore(btn, tbl);
@@ -682,20 +797,26 @@
 
   if (isEdit) {
     await processEdit();
-    const rerun = debounce(processEdit, 700);
+    injectTotalsPanel();
+    injectReloadButton();
+
+    const rerun = debounce(async () => {
+      await processEdit();
+      injectTotalsPanel();
+    }, 700);
+
     const tbl = document.querySelector('#lineItemTab');
     if (tbl) new MutationObserver(rerun).observe(tbl, { childList: true, subtree: true });
   }
 
   if (isDetail) {
     await processDetail();
-    injectDetailTotals();
-    injectDetailMetaReloadButton();
+    injectTotalsPanel();
+    injectReloadButton();
 
     const rerunD = debounce(async () => {
       await processDetail();
-      document.getElementById('hw24-detail-totals')?.remove();
-      injectDetailTotals();
+      injectTotalsPanel();
     }, 700);
 
     const tbl = document.querySelector('#lineItemTab');
