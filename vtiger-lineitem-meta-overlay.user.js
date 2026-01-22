@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.4.0
+// @version      1.4.1
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -139,7 +139,28 @@
       tr.querySelector(`div#purchaseCost${rn}_display`) ||
       tr.querySelector(`[id="purchaseCost${rn}_display"]`);
     if (el) return getFieldNumber(el);
-    // Detail-Modus: Spalte 2
+    // Detail-Modus: Spalte 2 ist bereits PC * Qty, also durch Qty teilen
+    if (isDetail) {
+      const totalPC = getDetailCellValue(tr, 2);
+      const qty = getDetailCellValue(tr, 1) || 1;
+      return totalPC / qty;
+    }
+    return 0;
+  }
+
+  // Detail-View: Purchase Cost Summe aus Zelle (bereits multipliziert)
+  function getPurchaseCostTotal(tr, rn) {
+    // Edit-Modus: PC pro Stück * Qty
+    const el =
+      tr.querySelector(`#purchaseCost${rn}`) ||
+      tr.querySelector(`input[name="purchaseCost${rn}"]`) ||
+      tr.querySelector(`#purchaseCost${rn}_display`);
+    if (el) {
+      const pcPerUnit = getFieldNumber(el);
+      const qty = getQuantity(tr, rn) || 1;
+      return pcPerUnit * qty;
+    }
+    // Detail-Modus: Spalte 2 ist bereits die Summe (PC * Qty)
     if (isDetail) return getDetailCellValue(tr, 2);
     return 0;
   }
@@ -591,12 +612,12 @@
     let sumSelling = 0;
 
     rows.forEach(tr => {
-      const rn = tr.getAttribute('data-row-num') || tr.id.replace('row', '');
+      const rn = tr.getAttribute('data-row-num') || tr.id?.replace('row', '') || '';
       const qty = getQuantity(tr, rn) || 1;
-      const pcPerUnit = getPurchaseCostPerUnit(tr, rn);
       const sellingPerUnit = getSellingPricePerUnit(tr, rn);
 
-      sumPC += pcPerUnit * qty;
+      // Purchase Cost: getPurchaseCostTotal liefert bereits die Summe (auch in Detail-View)
+      sumPC += getPurchaseCostTotal(tr, rn);
       sumSelling += sellingPerUnit * qty;
     });
 
