@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Meta Overlay (Auto / Manual)
 // @namespace    hw24.vtiger.lineitem.meta.overlay
-// @version      1.6.0
+// @version      1.6.1
 // @description  Show product number (PROxxxxx), audit maintenance descriptions, enforce description structure, display margin calculations, tax region validation
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -1068,9 +1068,17 @@
     const isEUTaxRegion = taxRegionLower === 'eu';
     const isNonEUTaxRegion = taxRegionLower.includes('non-eu');
 
+    // Bestimme die korrekte Tax Region basierend auf Billing Country
+    const billingIsAustria = isAustria(billingCountry);
+    const billingIsGermany = isGermany(billingCountry);
+    const billingIsEU = !billingIsAustria && !billingIsGermany && isEUCountry(billingCountry);
+    const billingIsNonEU = billingCountry && !billingIsAustria && !billingIsGermany && !billingIsEU;
+
     // Für Quotes, SalesOrder, Invoice
     if (['Quotes', 'SalesOrder', 'Invoice'].includes(currentModule)) {
-      if (isAustria(billingCountry)) {
+
+      // === BILLING COUNTRY AUSTRIA ===
+      if (billingIsAustria) {
         // Reverse Charge darf nicht aktiv sein
         if (reverseCharge) {
           issues.push({
@@ -1083,54 +1091,107 @@
         // Tax Region muss Austria sein
         if (taxRegion && !isAustriaTaxRegion) {
           issues.push({
-            type: 'warning',
-            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Österreich.`,
+            type: 'error',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Billing Country Österreich.`,
             fix: () => setTaxRegion('Austria'),
             fixLabel: 'Tax Region → Austria'
           });
         }
       }
 
-      // Reverse Charge + Tax Region Austria = NICHT erlaubt
-      if (reverseCharge && isAustriaTaxRegion) {
-        issues.push({
-          type: 'error',
-          message: '⚠️ Reverse Charge ist aktiviert, aber Tax Region ist Austria! Das ist nicht erlaubt.',
-          fix: () => setReverseCharge(false),
-          fixLabel: 'Reverse Charge deaktivieren'
-        });
+      // === BILLING COUNTRY GERMANY ===
+      else if (billingIsGermany) {
+        // Reverse Charge darf nicht aktiv sein
+        if (reverseCharge) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Reverse Charge ist aktiviert, aber Billing Country ist Deutschland!',
+            fix: () => setReverseCharge(false),
+            fixLabel: 'Reverse Charge deaktivieren'
+          });
+        }
+        // Tax Region muss Germany sein
+        if (taxRegion && !isGermanyTaxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" sein für Billing Country Deutschland.`,
+            fix: () => setTaxRegion('Germany'),
+            fixLabel: 'Tax Region → Germany (19%)'
+          });
+        }
       }
 
-      // Reverse Charge + Tax Region Germany = NICHT erlaubt
-      if (reverseCharge && isGermanyTaxRegion) {
-        issues.push({
-          type: 'error',
-          message: '⚠️ Reverse Charge ist aktiviert, aber Tax Region ist Germany! Das ist nicht erlaubt.',
-          fix: () => setReverseCharge(false),
-          fixLabel: 'Reverse Charge deaktivieren'
-        });
+      // === BILLING COUNTRY EU (nicht AT/DE) ===
+      else if (billingIsEU) {
+        // Tax Region muss EU sein
+        if (taxRegion && !isEUTaxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "EU" sein für Billing Country ${billingCountry}.`,
+            fix: () => setTaxRegion('EU'),
+            fixLabel: 'Tax Region → EU'
+          });
+        }
+        // Reverse Charge ist OK für EU
+      }
+
+      // === BILLING COUNTRY NON-EU ===
+      else if (billingIsNonEU) {
+        // Tax Region muss Non-EU sein
+        if (taxRegion && !isNonEUTaxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Non-EU" sein für Billing Country ${billingCountry}.`,
+            fix: () => setTaxRegion('Non-EU'),
+            fixLabel: 'Tax Region → Non-EU'
+          });
+        }
+        // Reverse Charge ist OK für Non-EU
+      }
+
+      // === ZUSÄTZLICHE KOMBINATIONS-CHECKS (falls Billing Country nicht gesetzt) ===
+      if (!billingCountry) {
+        // Reverse Charge + Tax Region Austria = NICHT erlaubt
+        if (reverseCharge && isAustriaTaxRegion) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Reverse Charge + Tax Region Austria ist nicht erlaubt. Bitte Billing Country prüfen!',
+            fix: () => setReverseCharge(false),
+            fixLabel: 'Reverse Charge deaktivieren'
+          });
+        }
+
+        // Reverse Charge + Tax Region Germany = NICHT erlaubt
+        if (reverseCharge && isGermanyTaxRegion) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Reverse Charge + Tax Region Germany ist nicht erlaubt. Bitte Billing Country prüfen!',
+            fix: () => setReverseCharge(false),
+            fixLabel: 'Reverse Charge deaktivieren'
+          });
+        }
       }
     }
 
     // Für PurchaseOrder
     if (currentModule === 'PurchaseOrder') {
-      if (isAustria(billingCountry)) {
+      if (billingIsAustria) {
         // Österreich → Tax Region Austria
         if (taxRegion && !isAustriaTaxRegion) {
           issues.push({
-            type: 'warning',
-            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Österreich.`,
+            type: 'error',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Billing Country Österreich.`,
             fix: () => setTaxRegion('Austria'),
             fixLabel: 'Tax Region → Austria'
           });
         }
-      } else if (isGermany(billingCountry)) {
+      } else if (billingIsGermany) {
         if (subjectType === 'wartung') {
           // Deutschland + Wartung (W/WV) → EU (nicht Austria)
-          if (taxRegion && isAustriaTaxRegion) {
+          if (taxRegion && !isEUTaxRegion) {
             issues.push({
               type: 'error',
-              message: '⚠️ Tax Region ist "Austria", aber Billing Country ist Deutschland mit Wartung (W/WV)!',
+              message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "EU" sein für Deutschland + Wartung (W/WV).`,
               fix: () => setTaxRegion('EU'),
               fixLabel: 'Tax Region → EU'
             });
@@ -1139,27 +1200,32 @@
           // Deutschland + Handel (H) → Germany (19%)
           if (taxRegion && !isGermanyTaxRegion) {
             issues.push({
-              type: 'warning',
+              type: 'error',
               message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" sein für Deutschland + Handel (H).`,
               fix: () => setTaxRegion('Germany'),
               fixLabel: 'Tax Region → Germany (19%)'
             });
           }
         }
-      } else if (billingCountry) {
-        // Andere Länder mit Wartung
-        if (subjectType === 'wartung') {
-          const isEU = isEUCountry(billingCountry);
-          const targetRegion = isEU ? 'EU' : 'Non-EU';
-
-          if (taxRegion && isAustriaTaxRegion) {
-            issues.push({
-              type: 'warning',
-              message: `⚠️ Tax Region ist "Austria", sollte aber "${targetRegion}" sein für ${billingCountry}.`,
-              fix: () => setTaxRegion(targetRegion),
-              fixLabel: `Tax Region → ${targetRegion}`
-            });
-          }
+      } else if (billingIsEU) {
+        // EU-Land → Tax Region EU
+        if (taxRegion && !isEUTaxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "EU" sein für Billing Country ${billingCountry}.`,
+            fix: () => setTaxRegion('EU'),
+            fixLabel: 'Tax Region → EU'
+          });
+        }
+      } else if (billingIsNonEU) {
+        // Non-EU-Land → Tax Region Non-EU
+        if (taxRegion && !isNonEUTaxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Non-EU" sein für Billing Country ${billingCountry}.`,
+            fix: () => setTaxRegion('Non-EU'),
+            fixLabel: 'Tax Region → Non-EU'
+          });
         }
       }
     }
