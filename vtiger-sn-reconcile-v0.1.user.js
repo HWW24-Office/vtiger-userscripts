@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger SN Reconcile (Edit Mode)
 // @namespace    hw24.vtiger.sn.reconcile
-// @version      1.0.0
+// @version      1.1.0
 // @description  Serial number reconciliation with modern UI - add, remove, reassign SNs across line items
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
@@ -346,6 +346,85 @@
       color: #991b1b;
     }
 
+    /* Reconciliation Results */
+    #hw24-sn-panel .result-group {
+      margin-bottom: 12px;
+    }
+    #hw24-sn-panel .result-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 12px;
+      margin-bottom: 6px;
+      padding: 6px 8px;
+      border-radius: 6px;
+    }
+    #hw24-sn-panel .result-header.matching {
+      background: #dcfce7;
+      color: #166534;
+    }
+    #hw24-sn-panel .result-header.to-remove {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    #hw24-sn-panel .result-header.missing {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    #hw24-sn-panel .result-header .count {
+      margin-left: auto;
+      font-weight: 700;
+    }
+    #hw24-sn-panel .result-sns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding-left: 8px;
+    }
+    #hw24-sn-panel .result-sn {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: monospace;
+    }
+    #hw24-sn-panel .result-sn.matching {
+      background: #bbf7d0;
+      color: #166534;
+    }
+    #hw24-sn-panel .result-sn.to-remove {
+      background: #fecaca;
+      color: #991b1b;
+    }
+    #hw24-sn-panel .result-sn.missing {
+      background: #fde68a;
+      color: #92400e;
+    }
+    #hw24-sn-panel .result-position {
+      font-size: 10px;
+      color: #64748b;
+      margin-left: 4px;
+    }
+    #hw24-sn-panel .summary-box {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+    #hw24-sn-panel .summary-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
+    #hw24-sn-panel .summary-row.total {
+      border-top: 1px solid #e2e8f0;
+      margin-top: 4px;
+      padding-top: 8px;
+      font-weight: 600;
+    }
+
     /* Add Dialog */
     #hw24-sn-dialog {
       position: fixed;
@@ -446,8 +525,10 @@
      ============================= */
 
   let panelVisible = false;
-  let toRemove = new Set(); // SNs marked for removal
   let SNAPSHOT = null;
+
+  // Reconciliation results
+  let reconcileResult = null; // { matching: [], toRemove: [], missing: [] }
 
   /* =============================
      INJECT STYLES & UI
@@ -483,16 +564,19 @@
         <button id="hw24-sn-close" title="Schließen">✕</button>
       </div>
       <div class="panel-body">
-        <div id="hw24-sn-overview" class="section"></div>
-
         <div class="section">
-          <div class="section-title">Neue SNs hinzufügen</div>
-          <textarea id="hw24-sn-add" placeholder="Seriennummern eingeben (eine pro Zeile oder durch Komma getrennt)"></textarea>
+          <div class="section-title">Soll-Liste (Kunde behält)</div>
+          <textarea id="hw24-sn-soll" placeholder="Seriennummern vom Kunden einfügen (eine pro Zeile oder durch Komma getrennt)"></textarea>
+          <div class="btn-row" style="margin-top:8px">
+            <button id="hw24-sn-reconcile" class="btn btn-primary" style="flex:2">🔍 Abgleichen</button>
+            <button id="hw24-sn-refresh" class="btn btn-secondary">🔄</button>
+          </div>
         </div>
 
-        <div class="btn-row">
-          <button id="hw24-sn-refresh" class="btn btn-secondary">🔄 Refresh</button>
-          <button id="hw24-sn-apply" class="btn btn-primary">✓ Apply</button>
+        <div id="hw24-sn-results" class="section" style="display:none"></div>
+
+        <div id="hw24-sn-actions" class="btn-row" style="display:none">
+          <button id="hw24-sn-apply" class="btn btn-primary">✓ Änderungen anwenden</button>
           <button id="hw24-sn-undo" class="btn btn-secondary" disabled>↩ Undo</button>
         </div>
 
@@ -504,7 +588,8 @@
 
     // Event listeners
     $('hw24-sn-close').onclick = () => togglePanel(false);
-    $('hw24-sn-refresh').onclick = refreshOverview;
+    $('hw24-sn-reconcile').onclick = performReconcile;
+    $('hw24-sn-refresh').onclick = () => { reconcileResult = null; performReconcile(); };
     $('hw24-sn-apply').onclick = applyChanges;
     $('hw24-sn-undo').onclick = undoChanges;
   }
@@ -515,119 +600,175 @@
     if (panel) {
       panel.classList.toggle('visible', panelVisible);
       if (panelVisible) {
-        toRemove.clear();
-        refreshOverview();
+        reconcileResult = null;
+        performReconcile(); // Shows current overview
       }
     }
   }
 
   /* =============================
-     OVERVIEW RENDERING
+     RECONCILIATION LOGIC
      ============================= */
 
-  async function refreshOverview() {
-    const container = $('hw24-sn-overview');
-    if (!container) return;
+  async function performReconcile() {
+    const resultsContainer = $('hw24-sn-results');
+    const actionsContainer = $('hw24-sn-actions');
+    if (!resultsContainer) return;
 
-    container.innerHTML = '<div style="color:#64748b;padding:10px;">Lade...</div>';
+    // Get SOLL list from textarea
+    const sollText = S($('hw24-sn-soll')?.value);
+    const sollList = parseList(sollText);
 
+    // Get current items and their SNs (IST)
     const items = getLineItems();
-    let totalSNs = 0;
 
-    // Fetch meta for all items
+    // Fetch meta for better display
     for (const it of items) {
       if (!it.meta && it.productId) {
         it.meta = await fetchProductMeta(it.productId);
       }
-      totalSNs += it.sns.length;
     }
 
-    container.innerHTML = `
-      <div class="section-title">
-        Aktuelle Seriennummern
-        <span class="count">${totalSNs}</span>
+    // Build IST index: SN -> position info
+    const istIndex = new Map();
+    items.forEach(it => {
+      const meta = it.meta || {};
+      const displayName = meta.productName || it.productName || `Pos ${it.rn}`;
+      it.sns.forEach(sn => {
+        istIndex.set(sn, { sn, position: displayName, item: it });
+      });
+    });
+
+    const istSNs = new Set(istIndex.keys());
+    const sollSNs = new Set(sollList);
+
+    // Calculate differences
+    const matching = []; // In both IST and SOLL
+    const toRemove = []; // In IST but not in SOLL
+    const missing = [];  // In SOLL but not in IST
+
+    // Check IST against SOLL
+    for (const [sn, info] of istIndex) {
+      if (sollSNs.has(sn)) {
+        matching.push({ sn, position: info.position });
+      } else {
+        toRemove.push({ sn, position: info.position });
+      }
+    }
+
+    // Check SOLL against IST
+    for (const sn of sollList) {
+      if (!istSNs.has(sn)) {
+        missing.push({ sn });
+      }
+    }
+
+    // Store result for apply
+    reconcileResult = { matching, toRemove, missing, items };
+
+    // Show results
+    resultsContainer.style.display = 'block';
+    actionsContainer.style.display = (toRemove.length > 0 || missing.length > 0) ? 'flex' : 'none';
+
+    // If no SOLL list provided, show current overview
+    if (sollList.length === 0) {
+      resultsContainer.innerHTML = `
+        <div class="summary-box">
+          <div style="font-weight:600;margin-bottom:8px;">Aktueller Stand</div>
+          <div class="summary-row">
+            <span>Positionen:</span>
+            <span>${items.length}</span>
+          </div>
+          <div class="summary-row">
+            <span>Seriennummern gesamt:</span>
+            <span>${istSNs.size}</span>
+          </div>
+        </div>
+        <div style="color:#64748b;font-size:12px;text-align:center;padding:10px;">
+          Füge die Soll-Liste vom Kunden ein und klicke "Abgleichen"
+        </div>
+      `;
+      actionsContainer.style.display = 'none';
+      return;
+    }
+
+    // Build results HTML
+    let html = `
+      <div class="summary-box">
+        <div class="summary-row">
+          <span>✓ Übereinstimmend:</span>
+          <span style="color:#166534">${matching.length}</span>
+        </div>
+        <div class="summary-row">
+          <span>✗ Zu entfernen (nicht in Soll):</span>
+          <span style="color:#991b1b">${toRemove.length}</span>
+        </div>
+        <div class="summary-row">
+          <span>⚠ Fehlend (nicht im Angebot):</span>
+          <span style="color:#92400e">${missing.length}</span>
+        </div>
+        <div class="summary-row total">
+          <span>Soll-Liste:</span>
+          <span>${sollList.length} SNs</span>
+        </div>
       </div>
     `;
 
-    if (items.length === 0) {
-      container.innerHTML += '<div style="color:#64748b;font-size:12px;">Keine Line Items gefunden.</div>';
-      return;
-    }
-
-    items.forEach(it => {
-      const meta = it.meta || {};
-      const displayName = meta.productName || it.productName || `Position ${it.rn}`;
-
-      const div = document.createElement('div');
-      div.className = 'line-item';
-      div.innerHTML = `
-        <div class="line-item-header">${displayName}</div>
-        <div class="line-item-meta">
-          ${meta.sla ? `SLA: ${meta.sla} • ` : ''}
-          ${meta.duration ? `Duration: ${meta.duration} • ` : ''}
-          Laufzeit: ${it.runtime}
-          ${it.sns.length ? ` • Qty: ${it.sns.length}` : ''}
+    // Matching section
+    if (matching.length > 0) {
+      html += `
+        <div class="result-group">
+          <div class="result-header matching">
+            <span>✓ Übereinstimmend</span>
+            <span class="count">${matching.length}</span>
+          </div>
+          <div class="result-sns">
+            ${matching.map(m => `
+              <span class="result-sn matching">${m.sn}<span class="result-position">${m.position}</span></span>
+            `).join('')}
+          </div>
         </div>
-        <div class="sn-list" data-rn="${it.rn}"></div>
       `;
-
-      const snList = div.querySelector('.sn-list');
-      if (it.sns.length === 0) {
-        snList.innerHTML = '<span style="color:#94a3b8;font-size:11px;">Keine SNs</span>';
-      } else {
-        it.sns.forEach(sn => {
-          const tag = document.createElement('span');
-          tag.className = 'sn-tag' + (toRemove.has(sn) ? ' to-remove' : '');
-          tag.innerHTML = `
-            ${sn}
-            <span class="remove-btn" data-sn="${sn}" title="Zum Entfernen markieren">✕</span>
-          `;
-          tag.querySelector('.remove-btn').onclick = (e) => {
-            e.stopPropagation();
-            toggleRemove(sn);
-          };
-          snList.appendChild(tag);
-        });
-      }
-
-      container.appendChild(div);
-    });
-  }
-
-  function toggleRemove(sn) {
-    if (toRemove.has(sn)) {
-      toRemove.delete(sn);
-    } else {
-      toRemove.add(sn);
-    }
-    // Update UI
-    document.querySelectorAll(`[data-sn="${sn}"]`).forEach(btn => {
-      btn.closest('.sn-tag')?.classList.toggle('to-remove', toRemove.has(sn));
-    });
-    updateStatus();
-  }
-
-  function updateStatus() {
-    const status = $('hw24-sn-status');
-    if (!status) return;
-
-    const addText = S($('hw24-sn-add')?.value);
-    const addCount = addText ? parseList(addText).length : 0;
-
-    if (toRemove.size === 0 && addCount === 0) {
-      status.innerHTML = '';
-      return;
     }
 
-    let msg = [];
-    if (toRemove.size > 0) {
-      msg.push(`${toRemove.size} SN(s) zum Entfernen markiert`);
-    }
-    if (addCount > 0) {
-      msg.push(`${addCount} neue SN(s) zum Hinzufügen`);
+    // To Remove section
+    if (toRemove.length > 0) {
+      html += `
+        <div class="result-group">
+          <div class="result-header to-remove">
+            <span>✗ Werden entfernt</span>
+            <span class="count">${toRemove.length}</span>
+          </div>
+          <div class="result-sns">
+            ${toRemove.map(m => `
+              <span class="result-sn to-remove">${m.sn}<span class="result-position">${m.position}</span></span>
+            `).join('')}
+          </div>
+        </div>
+      `;
     }
 
-    status.innerHTML = `<div class="status-msg warning">${msg.join(' • ')}</div>`;
+    // Missing section
+    if (missing.length > 0) {
+      html += `
+        <div class="result-group">
+          <div class="result-header missing">
+            <span>⚠ Fehlen im Angebot</span>
+            <span class="count">${missing.length}</span>
+          </div>
+          <div class="result-sns">
+            ${missing.map(m => `
+              <span class="result-sn missing">${m.sn}</span>
+            `).join('')}
+          </div>
+          <div style="font-size:11px;color:#92400e;margin-top:6px;padding-left:8px;">
+            Diese SNs sind in der Kundenliste, aber nicht im Angebot!
+          </div>
+        </div>
+      `;
+    }
+
+    resultsContainer.innerHTML = html;
   }
 
   /* =============================
@@ -635,6 +776,11 @@
      ============================= */
 
   async function applyChanges() {
+    if (!reconcileResult) {
+      showStatus('error', 'Bitte zuerst Abgleich durchführen');
+      return;
+    }
+
     const items = getLineItems();
 
     // Create snapshot for undo
@@ -645,25 +791,15 @@
     }));
     $('hw24-sn-undo').disabled = false;
 
-    // Get new SNs to add
-    const addText = S($('hw24-sn-add')?.value);
-    const addSNs = addText ? parseList(addText) : [];
+    // Get SNs to remove from reconcile result
+    const toRemoveSet = new Set(reconcileResult.toRemove.map(r => r.sn));
 
-    // Build index of existing SNs
-    const existingIndex = new Map();
-    items.forEach(it => {
-      it.sns.forEach(sn => {
-        if (!existingIndex.has(sn)) existingIndex.set(sn, []);
-        existingIndex.get(sn).push(it);
-      });
-    });
-
-    // Filter out SNs that already exist
-    const newSNs = addSNs.filter(sn => !existingIndex.has(sn));
+    // Get missing SNs that need to be added
+    const missingSNs = reconcileResult.missing.map(m => m.sn);
 
     // Remove marked SNs
     items.forEach(it => {
-      it.sns = it.sns.filter(sn => !toRemove.has(sn));
+      it.sns = it.sns.filter(sn => !toRemoveSet.has(sn));
     });
 
     // Function to write back changes
@@ -682,23 +818,24 @@
         }
       });
 
-      // Clear inputs and state
-      toRemove.clear();
-      if ($('hw24-sn-add')) $('hw24-sn-add').value = '';
+      // Clear state
+      reconcileResult = null;
+      if ($('hw24-sn-soll')) $('hw24-sn-soll').value = '';
+      $('hw24-sn-results').style.display = 'none';
+      $('hw24-sn-actions').style.display = 'none';
 
-      showStatus('success', '✓ Änderungen angewendet');
-      refreshOverview();
+      showStatus('success', `✓ ${toRemoveSet.size} SN(s) entfernt`);
     };
 
-    // If there are new SNs to add, open dialog
-    if (newSNs.length > 0) {
+    // If there are missing SNs, open dialog to add them
+    if (missingSNs.length > 0) {
       // Fetch meta for dialog
       for (const it of items) {
         if (!it.meta && it.productId) {
           it.meta = await fetchProductMeta(it.productId);
         }
       }
-      openAddDialog(newSNs, items, writeBack);
+      openAddDialog(missingSNs, items, writeBack);
     } else {
       writeBack();
     }
@@ -719,9 +856,11 @@
       if (q) { q.value = s.qty; fire(q); }
     });
 
-    toRemove.clear();
+    reconcileResult = null;
+    $('hw24-sn-results').style.display = 'none';
+    $('hw24-sn-actions').style.display = 'none';
+
     showStatus('success', '↩ Undo durchgeführt');
-    refreshOverview();
   }
 
   function showStatus(type, message) {
@@ -873,12 +1012,6 @@
     injectStyles();
     injectToggleButton();
     injectPanel();
-
-    // Watch for add textarea changes
-    const addTextarea = $('hw24-sn-add');
-    if (addTextarea) {
-      addTextarea.addEventListener('input', updateStatus);
-    }
   }
 
   if (document.readyState === 'loading') {
