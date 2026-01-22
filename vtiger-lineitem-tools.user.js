@@ -702,8 +702,13 @@
       return lines.map(l => normalizeServiceDateLine(l.trimEnd()).line).join('\n');
     }
 
+    function fixLiteralNewlines(desc) {
+      // Konvertiert literale \n Strings zu echten Zeilenumbrüchen
+      return desc.replace(/\\n/g, '\n');
+    }
+
     function applyAllFixes(desc) {
-      return fixServiceDates(fixSerialFormat(desc));
+      return fixServiceDates(fixSerialFormat(fixLiteralNewlines(desc)));
     }
 
     /* Render Helpers */
