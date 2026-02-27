@@ -941,6 +941,17 @@
       globalDateBtn.onmouseleave = () => globalDateBtn.style.background = '#10b981';
       globalDateBtn.onclick = () => runGlobalDate(toolbar);
 
+      // EK × Faktor Button (global) - ehemals "HW24 Preis × / Faktor"
+      const ekMultBtn = document.createElement('button');
+      ekMultBtn.id = 'hw24-ek-mult';
+      ekMultBtn.type = 'button';
+      ekMultBtn.innerHTML = '💵 EK × Faktor';
+      ekMultBtn.title = 'Einkaufspreis × Faktor = Verkaufspreis (alle Positionen)';
+      ekMultBtn.style.cssText = btnStyle + 'background:#3b82f6;color:#fff;';
+      ekMultBtn.onmouseenter = () => ekMultBtn.style.background = '#2563eb';
+      ekMultBtn.onmouseleave = () => ekMultBtn.style.background = '#3b82f6';
+      ekMultBtn.onclick = () => runGlobalEKMultiplier();
+
       // VP × Faktor Button (global)
       const vpMultBtn = document.createElement('button');
       vpMultBtn.id = 'hw24-vp-mult';
@@ -952,12 +963,23 @@
       vpMultBtn.onmouseleave = () => vpMultBtn.style.background = '#f59e0b';
       vpMultBtn.onclick = () => runUnitPriceMultiplier();
 
+      // Undo Button
+      const undoBtn = document.createElement('button');
+      undoBtn.id = 'hw24-undo';
+      undoBtn.type = 'button';
+      undoBtn.innerHTML = '↩️ Undo';
+      undoBtn.title = 'Preisänderungen rückgängig machen';
+      undoBtn.style.cssText = btnStyle + 'background:#6b7280;color:#fff;';
+      undoBtn.onmouseenter = () => undoBtn.style.background = '#4b5563';
+      undoBtn.onmouseleave = () => undoBtn.style.background = '#6b7280';
+      undoBtn.onclick = () => runUndo();
+
       // Status span
       const status = document.createElement('span');
       status.id = 'hw24-toolbar-status';
       status.style.cssText = 'font-size:11px;color:#16a34a;font-weight:500;margin-left:auto;opacity:0;transition:opacity 0.3s;';
 
-      toolbar.append(label, fixBtn, toEnBtn, toDeBtn, globalDateBtn, vpMultBtn, status);
+      toolbar.append(label, fixBtn, toEnBtn, toDeBtn, globalDateBtn, ekMultBtn, vpMultBtn, undoBtn, status);
 
       const tbl = document.querySelector('#lineItemTab');
       tbl?.parentElement?.insertBefore(toolbar, tbl);
@@ -2166,37 +2188,19 @@
       }
     }
 
-    function addButton() {
-      if ($('hw24-multiplier-btn')) return;
-
-      const btn = document.createElement('button');
-      btn.id = 'hw24-multiplier-btn';
-      btn.type = 'button';
-      btn.textContent = 'HW24 Preis × / Faktor';
-      btn.style.cssText = 'margin-left:8px;background:#1f6feb;color:#fff;border:0;padding:6px 12px;border-radius:4px;cursor:pointer;';
-      btn.onclick = runMultiplier;
-
-      const undoBtn = document.createElement('button');
-      undoBtn.type = 'button';
-      undoBtn.textContent = 'Undo';
-      undoBtn.style.cssText = 'margin-left:4px;background:#555;color:#fff;border:0;padding:6px 10px;border-radius:4px;cursor:pointer;';
-      undoBtn.onclick = undoChanges;
-
-      const target = document.querySelector('.btn-toolbar') || document.querySelector('.editViewHeader');
-      if (target) { target.appendChild(btn); target.appendChild(undoBtn); }
-    }
-
+    // Buttons werden jetzt in der Descriptions-Toolbar angezeigt (injectGlobalFixButton)
     function init() {
-      if (!isMultiplierModule || !isEdit) return;
-      new MutationObserver(addButton).observe(document.body, { childList: true, subtree: true });
+      // Keine separate Button-Injection mehr nötig
     }
 
-    return { init, runMultiplierForRow, runUnitPriceMultiplier };
+    return { init, runMultiplier, undoChanges, runMultiplierForRow, runUnitPriceMultiplier };
   })();
 
   // Globale Funktionen für Buttons in MetaOverlay
   function runMultiplierForRow(row) { PriceMultiplier.runMultiplierForRow(row); }
   function runUnitPriceMultiplier(singleRow) { PriceMultiplier.runUnitPriceMultiplier(singleRow); }
+  function runGlobalEKMultiplier() { PriceMultiplier.runMultiplier(); }
+  function runUndo() { PriceMultiplier.undoChanges(); }
 
   /* ═══════════════════════════════════════════════════════════════════════════
      BOOTSTRAP
