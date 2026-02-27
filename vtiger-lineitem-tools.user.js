@@ -1133,8 +1133,20 @@
         const optValue = el.options[i].value;
         if (optValue === targetValue || optText.includes(targetLower)) {
           el.value = optValue;
-          if (typeof jQuery !== 'undefined' && jQuery.fn.select2) jQuery(el).trigger('change');
-          else el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.selectedIndex = i;
+
+          // Fix: Select2-spezifische Events triggern damit vtiger die Steuer neu berechnet
+          if (typeof jQuery !== 'undefined' && jQuery.fn.select2) {
+            const $el = jQuery(el);
+            $el.trigger('change');
+            $el.trigger({
+              type: 'select2:select',
+              params: { data: { id: optValue, text: el.options[i].textContent } }
+            });
+            $el.trigger('change.select2');
+          } else {
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
           return true;
         }
       }
@@ -1342,7 +1354,8 @@
             e.stopImmediatePropagation();
 
             showTaxValidationPopup(issues,
-              () => { issues.forEach(issue => issue.fix?.()); setTimeout(() => triggerSave(btn), 100); },
+              // Fix: Timeout auf 500ms erhöht für vtiger Tax-Rekalkulierung
+              () => { issues.forEach(issue => issue.fix?.()); setTimeout(() => triggerSave(btn), 500); },
               () => { triggerSave(btn); }
             );
             return false;
