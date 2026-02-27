@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.1.0
+// @version      2.1.1
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -1830,7 +1830,11 @@
   const PriceMultiplier = (function () {
     const isMultiplierModule = ['SalesOrder', 'Quotes', 'Invoice'].includes(currentModule);
 
-    const fireChange = el => el && el.dispatchEvent(new Event('change', { bubbles: true }));
+    // Fix: Alle Events dispatchen (input, change, blur) damit vtiger Totals aktualisiert
+    const fireChange = el => {
+      if (!el) return;
+      ['input', 'change', 'blur'].forEach(e => el.dispatchEvent(new Event(e, { bubbles: true })));
+    };
 
     const parseFactor = raw => {
       if (!raw) return null;
@@ -1872,6 +1876,13 @@
         fireChange(sp);
         updated++;
       });
+
+      // Fix: Totals Panel nach Preisänderung aktualisieren
+      setTimeout(() => {
+        if (typeof MetaOverlay !== 'undefined' && MetaOverlay.injectTotalsPanel) {
+          MetaOverlay.injectTotalsPanel();
+        }
+      }, 200);
 
       alert(`Fertig ✅\n${updated} Position(en) aktualisiert`);
     }
