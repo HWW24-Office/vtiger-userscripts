@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.1.1
+// @version      2.2.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -848,7 +848,25 @@
       refreshBtn.style.cssText = 'padding:4px 8px;font-size:11px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;color:#475569;';
       refreshBtn.onclick = e => { e.preventDefault(); e.stopPropagation(); refreshBadgeForRow(tr); };
 
-      btnContainer.append(stdBtn, refreshBtn);
+      // EK × Faktor pro Position
+      const ekMultBtn = document.createElement('button');
+      ekMultBtn.type = 'button';
+      ekMultBtn.className = 'hw24-ek-btn';
+      ekMultBtn.textContent = 'EK×';
+      ekMultBtn.title = 'EK × Faktor = VK (nur diese Position)';
+      ekMultBtn.style.cssText = 'padding:4px 8px;font-size:11px;background:#dbeafe;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;color:#1d4ed8;font-weight:bold;';
+      ekMultBtn.onclick = e => { e.preventDefault(); e.stopPropagation(); runMultiplierForRow(tr); };
+
+      // VP × Faktor pro Position
+      const vpMultBtn = document.createElement('button');
+      vpMultBtn.type = 'button';
+      vpMultBtn.className = 'hw24-vp-btn';
+      vpMultBtn.textContent = 'VP×';
+      vpMultBtn.title = 'Verkaufspreis × Faktor (nur diese Position)';
+      vpMultBtn.style.cssText = 'padding:4px 8px;font-size:11px;background:#fef3c7;border:1px solid #f59e0b;border-radius:4px;cursor:pointer;color:#92400e;font-weight:bold;';
+      vpMultBtn.onclick = e => { e.preventDefault(); e.stopPropagation(); runUnitPriceMultiplier(tr); };
+
+      btnContainer.append(stdBtn, refreshBtn, ekMultBtn, vpMultBtn);
       ta.after(btnContainer);
     }
 
@@ -912,12 +930,34 @@
       toDeBtn.onmouseleave = () => toDeBtn.style.background = '#8b5cf6';
       toDeBtn.onclick = () => translateAllDescriptions('de', toolbar);
 
+      // Globales Datum Button
+      const globalDateBtn = document.createElement('button');
+      globalDateBtn.id = 'hw24-global-date';
+      globalDateBtn.type = 'button';
+      globalDateBtn.innerHTML = '📅 Globales Datum';
+      globalDateBtn.title = 'Service Start & Ende für alle Positionen setzen';
+      globalDateBtn.style.cssText = btnStyle + 'background:#10b981;color:#fff;';
+      globalDateBtn.onmouseenter = () => globalDateBtn.style.background = '#059669';
+      globalDateBtn.onmouseleave = () => globalDateBtn.style.background = '#10b981';
+      globalDateBtn.onclick = () => runGlobalDate(toolbar);
+
+      // VP × Faktor Button (global)
+      const vpMultBtn = document.createElement('button');
+      vpMultBtn.id = 'hw24-vp-mult';
+      vpMultBtn.type = 'button';
+      vpMultBtn.innerHTML = '💰 VP × Faktor';
+      vpMultBtn.title = 'Verkaufspreis aller Positionen mit Faktor multiplizieren';
+      vpMultBtn.style.cssText = btnStyle + 'background:#f59e0b;color:#fff;';
+      vpMultBtn.onmouseenter = () => vpMultBtn.style.background = '#d97706';
+      vpMultBtn.onmouseleave = () => vpMultBtn.style.background = '#f59e0b';
+      vpMultBtn.onclick = () => runUnitPriceMultiplier();
+
       // Status span
       const status = document.createElement('span');
       status.id = 'hw24-toolbar-status';
       status.style.cssText = 'font-size:11px;color:#16a34a;font-weight:500;margin-left:auto;opacity:0;transition:opacity 0.3s;';
 
-      toolbar.append(label, fixBtn, toEnBtn, toDeBtn, status);
+      toolbar.append(label, fixBtn, toEnBtn, toDeBtn, globalDateBtn, vpMultBtn, status);
 
       const tbl = document.querySelector('#lineItemTab');
       tbl?.parentElement?.insertBefore(toolbar, tbl);
@@ -948,6 +988,78 @@
         status.style.opacity = '1';
         setTimeout(() => { status.style.opacity = '0'; }, 2500);
       }
+    }
+
+    /* Globales Datum */
+    function getTodayFormatted() {
+      const d = new Date();
+      return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+    }
+
+    function getOneYearLater(dateStr) {
+      const [dd, mm, yyyy] = dateStr.split('.').map(Number);
+      const date = new Date(yyyy + 1, mm - 1, dd - 1);
+      return `${String(date.getDate()).padStart(2,'0')}.${String(date.getMonth()+1).padStart(2,'0')}.${date.getFullYear()}`;
+    }
+
+    function updateServiceDates(desc, startDate, endDate) {
+      let result = desc;
+
+      // Service Start ersetzen oder hinzufügen
+      if (/Service\s*Start\s*:/i.test(result)) {
+        result = result.replace(/Service\s*Start\s*:\s*[^\n\r]*/i, `Service Start: ${startDate}`);
+      } else {
+        result += `\nService Start: ${startDate}`;
+      }
+
+      // Service Ende ersetzen oder hinzufügen (beide Varianten prüfen)
+      const hasEnglish = /Service\s*End\s*:/i.test(result);
+      const hasGerman = /Service\s*Ende\s*:/i.test(result);
+
+      if (hasEnglish && !hasGerman) {
+        result = result.replace(/Service\s*End\s*:\s*[^\n\r]*/i, `Service End: ${endDate}`);
+      } else if (hasGerman) {
+        result = result.replace(/Service\s*Ende\s*:\s*[^\n\r]*/i, `Service Ende: ${endDate}`);
+      } else {
+        result += `\nService Ende: ${endDate}`;
+      }
+
+      return result;
+    }
+
+    function runGlobalDate(toolbar) {
+      const startDate = prompt('Service Start Datum (DD.MM.YYYY):', getTodayFormatted());
+      if (!startDate) return;
+      if (!isValidDDMMYYYY(startDate)) {
+        alert('Ungültiges Datumsformat. Bitte DD.MM.YYYY verwenden.');
+        return;
+      }
+
+      const endDate = prompt('Service Ende Datum (DD.MM.YYYY):', getOneYearLater(startDate));
+      if (!endDate) return;
+      if (!isValidDDMMYYYY(endDate)) {
+        alert('Ungültiges Datumsformat. Bitte DD.MM.YYYY verwenden.');
+        return;
+      }
+
+      const tbl = document.querySelector('#lineItemTab');
+      if (!tbl) return;
+
+      const rows = [...tbl.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
+      let count = 0;
+
+      rows.forEach(tr => {
+        const ta = tr.querySelector('textarea[name*="comment"]') || tr.querySelector('textarea[id^="comment"]');
+        if (!ta) return;
+
+        const before = ta.value;
+        ta.value = updateServiceDates(ta.value, startDate, endDate);
+        if (before !== ta.value) count++;
+        fire(ta);
+        refreshBadgeForRow(tr);
+      });
+
+      showToolbarStatus(toolbar, `✓ ${count} Positionen aktualisiert`);
     }
 
     /* Totals Panel */
@@ -1960,14 +2072,98 @@
     function undoChanges() {
       let restored = 0;
       document.querySelectorAll("input[name^='listPrice']").forEach(sp => {
+        // Undo EK × Faktor
         if (sp.dataset.hw24Orig != null) {
           sp.value = sp.dataset.hw24Orig;
           delete sp.dataset.hw24Orig;
           fireChange(sp);
           restored++;
         }
+        // Undo VP × Faktor
+        if (sp.dataset.hw24OrigUP != null) {
+          sp.value = sp.dataset.hw24OrigUP;
+          delete sp.dataset.hw24OrigUP;
+          fireChange(sp);
+          restored++;
+        }
       });
       alert(`Undo abgeschlossen ↩️\n${restored} Position(en) zurückgesetzt`);
+    }
+
+    // EK × Faktor pro Position
+    function runMultiplierForRow(row) {
+      const input = prompt(
+        'Aufschlag-Faktor für diese Position:\n\n• 1.77  → EK × 1.77 = VK\n• /3    → EK ÷ 3 = VK',
+        '1.77'
+      );
+
+      const factor = parseFactor(input);
+      if (!factor) { alert('Ungültiger Faktor'); return; }
+
+      const pc = row.querySelector("input[name^='purchaseCost']");
+      const sp = row.querySelector("input[name^='listPrice']");
+      const qty = row.querySelector("input[name^='qty']");
+
+      if (!pc || !sp || !qty) { alert('Felder nicht gefunden'); return; }
+
+      const purchaseCost = toNum(pc.value);
+      const quantity = toNum(qty.value);
+
+      if (!Number.isFinite(purchaseCost) || !Number.isFinite(quantity) || quantity <= 0) {
+        alert('Ungültige Werte in EK oder Menge');
+        return;
+      }
+
+      if (!sp.dataset.hw24Orig) sp.dataset.hw24Orig = sp.value;
+
+      const sellingPrice = Math.round((purchaseCost * factor / quantity) * 10) / 10;
+      sp.value = sellingPrice.toFixed(1);
+      fireChange(sp);
+
+      setTimeout(() => {
+        if (typeof MetaOverlay !== 'undefined' && MetaOverlay.injectTotalsPanel) {
+          MetaOverlay.injectTotalsPanel();
+        }
+      }, 200);
+    }
+
+    // VP × Faktor (global oder pro Position)
+    function runUnitPriceMultiplier(singleRow = null) {
+      const input = prompt(
+        'Verkaufspreis-Faktor:\n\n• 1.05  → +5% Aufschlag\n• 0.9   → -10% Rabatt\n• /2    → halbieren',
+        '1.0'
+      );
+
+      const factor = parseFactor(input);
+      if (!factor) { alert('Ungültiger Faktor'); return; }
+
+      let updated = 0;
+      const rows = singleRow ? [singleRow] : [...document.querySelectorAll('tr.lineItemRow')];
+
+      rows.forEach(row => {
+        const sp = row.querySelector("input[name^='listPrice']");
+        if (!sp) return;
+
+        const currentPrice = toNum(sp.value);
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
+
+        if (!sp.dataset.hw24OrigUP) sp.dataset.hw24OrigUP = sp.value;
+
+        const newPrice = Math.round(currentPrice * factor * 100) / 100;
+        sp.value = newPrice.toFixed(2);
+        fireChange(sp);
+        updated++;
+      });
+
+      setTimeout(() => {
+        if (typeof MetaOverlay !== 'undefined' && MetaOverlay.injectTotalsPanel) {
+          MetaOverlay.injectTotalsPanel();
+        }
+      }, 200);
+
+      if (!singleRow) {
+        alert(`Fertig ✅\n${updated} Verkaufspreis(e) aktualisiert`);
+      }
     }
 
     function addButton() {
@@ -1995,8 +2191,12 @@
       new MutationObserver(addButton).observe(document.body, { childList: true, subtree: true });
     }
 
-    return { init };
+    return { init, runMultiplierForRow, runUnitPriceMultiplier };
   })();
+
+  // Globale Funktionen für Buttons in MetaOverlay
+  function runMultiplierForRow(row) { PriceMultiplier.runMultiplierForRow(row); }
+  function runUnitPriceMultiplier(singleRow) { PriceMultiplier.runUnitPriceMultiplier(singleRow); }
 
   /* ═══════════════════════════════════════════════════════════════════════════
      BOOTSTRAP
