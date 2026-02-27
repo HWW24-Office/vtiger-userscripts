@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.2.0
+// @version      2.3.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -974,12 +974,36 @@
       undoBtn.onmouseleave = () => undoBtn.style.background = '#6b7280';
       undoBtn.onclick = () => runUndo();
 
+      // Provision % Button
+      const commissionBtn = document.createElement('button');
+      commissionBtn.id = 'hw24-commission-btn';
+      commissionBtn.type = 'button';
+      commissionBtn.innerHTML = '💼 Provision %';
+      commissionBtn.title = 'Partner-Provisionsanteil konfigurieren (Standard: 50%)';
+      commissionBtn.style.cssText = btnStyle + 'background:#f59e0b;color:#fff;';
+      commissionBtn.onmouseenter = () => commissionBtn.style.background = '#d97706';
+      commissionBtn.onmouseleave = () => commissionBtn.style.background = '#f59e0b';
+      commissionBtn.onclick = () => {
+        const current = localStorage.getItem('hw24-commission-pct') || '50';
+        const input = prompt('Partner-Provisionsanteil (%) der Marge:', current);
+        if (input !== null) {
+          const pct = parseFloat(input);
+          if (!isNaN(pct) && pct >= 0 && pct <= 100) {
+            localStorage.setItem('hw24-commission-pct', pct.toString());
+            MetaOverlay.injectTotalsPanel();
+            showToolbarStatus(toolbar, `✓ Provision ${pct}%`);
+          } else {
+            alert('Ungültiger Wert. Bitte 0-100 eingeben.');
+          }
+        }
+      };
+
       // Status span
       const status = document.createElement('span');
       status.id = 'hw24-toolbar-status';
       status.style.cssText = 'font-size:11px;color:#16a34a;font-weight:500;margin-left:auto;opacity:0;transition:opacity 0.3s;';
 
-      toolbar.append(label, fixBtn, toEnBtn, toDeBtn, globalDateBtn, ekMultBtn, vpMultBtn, undoBtn, status);
+      toolbar.append(label, fixBtn, toEnBtn, toDeBtn, globalDateBtn, ekMultBtn, vpMultBtn, undoBtn, commissionBtn, status);
 
       const tbl = document.querySelector('#lineItemTab');
       tbl?.parentElement?.insertBefore(toolbar, tbl);
@@ -1118,7 +1142,11 @@
       const marginAfterDiscount = effectiveTotal - sumPC;
       const marginAfterDiscountPct = sumPC ? (marginAfterDiscount / sumPC * 100) : 0;
 
-      return { sumPC, itemsTotal, overallDiscount, marginBeforeDiscount, marginBeforeDiscountPct, effectiveTotal, marginAfterDiscount, marginAfterDiscountPct };
+      // Partner-Provision: Standard 50%, konfigurierbar via localStorage
+      const commissionPct = parseFloat(localStorage.getItem('hw24-commission-pct') || '50');
+      const partnerCommission = marginAfterDiscount * (commissionPct / 100);
+
+      return { sumPC, itemsTotal, overallDiscount, marginBeforeDiscount, marginBeforeDiscountPct, effectiveTotal, marginAfterDiscount, marginAfterDiscountPct, partnerCommission, commissionPct };
     }
 
     function injectTotalsPanel() {
@@ -1147,6 +1175,7 @@
           <tr style="border-top:1px dashed #cbd5e1;"><td style="padding:6px 0 3px;color:#475569;font-weight:500;">Marge (vor Discount):</td><td style="padding:6px 0 3px;text-align:right;font-weight:bold;color:${marginBeforeColor};">${totals.sumPC ? formatNum(totals.marginBeforeDiscount) + ' €' : '—'}${totals.sumPC ? '<span style="font-weight:normal;color:#64748b;"> (' + formatPct(totals.marginBeforeDiscountPct) + '%)</span>' : ''}</td></tr>
           ${totals.overallDiscount ? `<tr><td style="padding:3px 0;color:#64748b;">Overall Discount:</td><td style="padding:3px 0;text-align:right;font-weight:600;color:#dc2626;">- ${formatNum(totals.overallDiscount)} €</td></tr>` : ''}
           <tr style="background:#e2e8f0;border-radius:4px;"><td style="padding:6px 8px;color:#1e293b;font-weight:600;">Marge (nach Discount):</td><td style="padding:6px 8px;text-align:right;font-weight:bold;font-size:13px;color:${marginColor};">${totals.sumPC ? formatNum(totals.marginAfterDiscount) + ' €' : '—'}${totals.sumPC ? '<span style="font-weight:normal;color:#64748b;"> (' + formatPct(totals.marginAfterDiscountPct) + '%)</span>' : ''}</td></tr>
+          <tr style="background:#fef3c7;border-radius:4px;"><td style="padding:6px 8px;color:#92400e;font-weight:500;">💼 Partner-Provision (${totals.commissionPct}%):</td><td style="padding:6px 8px;text-align:right;font-weight:bold;font-size:13px;color:#f59e0b;">${totals.sumPC ? formatNum(totals.partnerCommission) + ' €' : '—'}</td></tr>
         </table>
       `;
 
