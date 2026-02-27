@@ -1490,6 +1490,10 @@
      ═══════════════════════════════════════════════════════════════════════════ */
 
   const SNReconcile = (function () {
+    // Fix: Storage-Keys für unzugeordnete SNs
+    const SN_STORAGE_KEY = 'hw24_remaining_sns';
+    const SN_STORAGE_MODULE_KEY = 'hw24_remaining_sns_module';
+
     const parseList = t => uniq(S(t).split(/[\n,;]+/).map(norm).filter(Boolean));
 
     function extractRuntime(desc) {
@@ -1761,7 +1765,18 @@
 
     function openAddDialog(snList, items, onDone) {
       $('hw24-sn-dialog')?.remove();
-      let remaining = [...snList];
+
+      // Fix: Gespeicherte SNs laden und mit neuen kombinieren
+      let storedSNs = [];
+      try {
+        const stored = sessionStorage.getItem(SN_STORAGE_KEY);
+        const storedModule = sessionStorage.getItem(SN_STORAGE_MODULE_KEY);
+        if (stored && storedModule === currentModule) {
+          storedSNs = JSON.parse(stored);
+        }
+      } catch (e) {}
+
+      let remaining = [...new Set([...snList, ...storedSNs])];
       let selectedSNs = new Set();
       let selectedTarget = null;
 
@@ -1788,7 +1803,7 @@
               </div>`}
             </div>
             <div class="dialog-footer">
-              ${remaining.length > 0 ? `<button class="btn btn-secondary" id="hw24-dlg-cancel">Abbrechen</button><button class="btn btn-primary" id="hw24-dlg-assign" ${selectedSNs.size === 0 || !selectedTarget ? 'disabled' : ''}>Zuordnen (${selectedSNs.size})</button>` : `<button class="btn btn-primary" id="hw24-dlg-close">Schließen</button>`}
+              ${remaining.length > 0 ? `<button class="btn btn-outline" id="hw24-dlg-copy" title="SNs in Zwischenablage kopieren" style="margin-right:auto;">📋 Kopieren</button><button class="btn btn-secondary" id="hw24-dlg-cancel">Abbrechen</button><button class="btn btn-primary" id="hw24-dlg-assign" ${selectedSNs.size === 0 || !selectedTarget ? 'disabled' : ''}>Zuordnen (${selectedSNs.size})</button>` : `<button class="btn btn-primary" id="hw24-dlg-close">Schließen</button>`}
             </div>
           </div>
         `;
@@ -1817,11 +1832,53 @@
           };
         }
 
-        const cancelBtn = dialog.querySelector('#hw24-dlg-cancel');
-        if (cancelBtn) cancelBtn.onclick = () => dialog.remove();
+        // Fix: Kopieren-Button für unzugeordnete SNs
+        const copyBtn = dialog.querySelector('#hw24-dlg-copy');
+        if (copyBtn) {
+          copyBtn.onclick = async () => {
+            try {
+              await navigator.clipboard.writeText(remaining.join('\n'));
+              copyBtn.textContent = '✓ Kopiert!';
+              setTimeout(() => { copyBtn.textContent = '📋 Kopieren'; }, 2000);
+            } catch (e) {
+              const textArea = document.createElement('textarea');
+              textArea.value = remaining.join('\n');
+              document.body.appendChild(textArea);
+              textArea.select();
+              document.execCommand('copy');
+              document.body.removeChild(textArea);
+              copyBtn.textContent = '✓ Kopiert!';
+              setTimeout(() => { copyBtn.textContent = '📋 Kopieren'; }, 2000);
+            }
+          };
+        }
 
+        // Fix: Abbrechen speichert unzugeordnete SNs
+        const cancelBtn = dialog.querySelector('#hw24-dlg-cancel');
+        if (cancelBtn) {
+          cancelBtn.onclick = () => {
+            if (remaining.length > 0) {
+              try {
+                sessionStorage.setItem(SN_STORAGE_KEY, JSON.stringify(remaining));
+                sessionStorage.setItem(SN_STORAGE_MODULE_KEY, currentModule);
+              } catch (e) {}
+            }
+            dialog.remove();
+          };
+        }
+
+        // Fix: Schließen leert Storage (alle SNs zugeordnet)
         const closeBtn = dialog.querySelector('#hw24-dlg-close');
-        if (closeBtn) closeBtn.onclick = () => { dialog.remove(); onDone(); };
+        if (closeBtn) {
+          closeBtn.onclick = () => {
+            try {
+              sessionStorage.removeItem(SN_STORAGE_KEY);
+              sessionStorage.removeItem(SN_STORAGE_MODULE_KEY);
+            } catch (e) {}
+            dialog.remove();
+            onDone();
+          };
+        }
       }
 
       render();
