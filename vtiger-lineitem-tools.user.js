@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.3.0
+// @version      2.4.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -1280,6 +1280,97 @@
 
     const TAX_REGION_MAP = { 'eu': '12', 'non-eu': '13', 'germany': '14', 'germany (19%)': '14', 'austria': '15' };
 
+    const NICHT_STEUERBAR_FIELDS = {
+      'SalesOrder': 'cf_2282',
+      'Quotes': 'cf_2278',
+      'Invoice': 'cf_2280'
+    };
+
+    /* Organization VAT Cache */
+    let cachedVAT = null;
+    let cachedOrgId = null;
+
+    function getOrganizationId() {
+      const orgLink = document.querySelector('a[href*="module=Accounts&view=Detail"]') ||
+                      document.querySelector('a[href*="module=Organizations&view=Detail"]');
+      if (!orgLink) return null;
+      const href = orgLink.getAttribute('href');
+      const match = href.match(/record=(\d+)/);
+      return match ? match[1] : null;
+    }
+
+    async function fetchOrganizationVAT() {
+      const orgId = getOrganizationId();
+      if (!orgId) return '';
+
+      if (orgId === cachedOrgId && cachedVAT !== null) {
+        return cachedVAT;
+      }
+
+      try {
+        const url = `index.php?module=Accounts&view=Detail&record=${orgId}`;
+        const r = await fetch(url, { credentials: 'same-origin' });
+        const html = await r.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const labels = [...doc.querySelectorAll('[id*="_detailView_fieldLabel_"]')];
+        const vatLabel = labels.find(l => {
+          const txt = l.textContent.toLowerCase();
+          return txt.includes('vat') || txt.includes('uid') || txt.includes('ust');
+        });
+
+        if (vatLabel) {
+          const valueId = vatLabel.id.replace('fieldLabel', 'fieldValue');
+          const valueEl = doc.getElementById(valueId);
+          cachedVAT = (valueEl?.textContent || '').trim();
+        } else {
+          cachedVAT = '';
+        }
+        cachedOrgId = orgId;
+        return cachedVAT;
+      } catch (e) {
+        console.error('HW24: Fehler beim Laden der VAT Number:', e);
+        return '';
+      }
+    }
+
+    function findNichtSteuerbarCheckbox() {
+      const fieldName = NICHT_STEUERBAR_FIELDS[currentModule];
+      if (!fieldName) return null;
+
+      const selectors = [
+        `input[type="checkbox"][name="${fieldName}"]`,
+        `input[name="${fieldName}"]`,
+        `input[id*="_editView_fieldName_${fieldName}"]`
+      ];
+
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) return el;
+      }
+      return null;
+    }
+
+    function getNichtSteuerbar() {
+      const el = findNichtSteuerbarCheckbox();
+      if (!el) return false;
+      if (el.type === 'checkbox') return el.checked;
+      return el.value === '1' || el.value === 'on';
+    }
+
+    function setNichtSteuerbar(value) {
+      const el = findNichtSteuerbarCheckbox();
+      if (!el) return false;
+      if (el.type === 'checkbox') {
+        el.checked = !!value;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        el.value = value ? '1' : '0';
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return true;
+    }
+
     function getTaxRegion() {
       const el = document.querySelector('#region_id');
       if (el && el.selectedIndex >= 0) return el.options[el.selectedIndex]?.textContent?.trim() || '';
@@ -1377,12 +1468,17 @@
       return '';
     }
 
-    function validateTaxSettings() {
+    async function validateTaxSettings() {
       if (!isEdit) return null;
+
       const billingCountry = getBillingCountry();
       const taxRegion = getTaxRegion();
       const reverseCharge = getReverseCharge();
+      const nichtSteuerbar = getNichtSteuerbar();
       const subjectType = getSubjectType();
+      const vatNumber = await fetchOrganizationVAT();
+      const hasVAT = vatNumber.length > 0;
+
       const issues = [];
 
       const taxRegionLower = taxRegion.toLowerCase();
@@ -1393,70 +1489,152 @@
 
       const billingIsAustria = isAustria(billingCountry);
       const billingIsGermany = isGermany(billingCountry);
-      const billingIsEU = !billingIsAustria && !billingIsGermany && isEUCountry(billingCountry);
+      const billingIsEU = !billingIsAustria && isEUCountry(billingCountry);
       const billingIsNonEU = billingCountry && !billingIsAustria && !billingIsGermany && !billingIsEU;
 
-      if (['Quotes', 'SalesOrder', 'Invoice'].includes(currentModule)) {
-        if (billingIsAustria) {
-          if (reverseCharge) {
-            issues.push({ type: 'error', message: '⚠️ Reverse Charge ist aktiviert, aber Billing Country ist Österreich!', fix: () => setReverseCharge(false), fixLabel: 'Reverse Charge deaktivieren' });
-          }
-          if (taxRegion && !isAustriaTaxRegion) {
-            issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Billing Country Österreich.`, fix: () => setTaxRegion('Austria'), fixLabel: 'Tax Region → Austria' });
-          }
-        } else if (billingIsGermany) {
-          if (subjectType === 'wartung') {
-            if (taxRegion && !isGermanyTaxRegion && !isEUTaxRegion) {
-              issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" oder "EU" sein für Deutschland + Wartung.`, fix: () => setTaxRegion('Germany'), fixLabel: 'Tax Region → Germany (19%)' });
-            }
-            if (reverseCharge && isGermanyTaxRegion) {
-              issues.push({ type: 'error', message: '⚠️ Reverse Charge ist aktiviert, aber Tax Region ist Germany. Für Reverse Charge "EU" wählen.', fix: () => setTaxRegion('EU'), fixLabel: 'Tax Region → EU' });
-            }
-          } else {
-            if (reverseCharge) {
-              issues.push({ type: 'error', message: '⚠️ Reverse Charge ist aktiviert, aber Billing Country ist Deutschland (Handel)!', fix: () => setReverseCharge(false), fixLabel: 'Reverse Charge deaktivieren' });
-            }
-            if (taxRegion && !isGermanyTaxRegion) {
-              issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" sein für Billing Country Deutschland.`, fix: () => setTaxRegion('Germany'), fixLabel: 'Tax Region → Germany (19%)' });
-            }
-          }
-        } else if (billingIsEU) {
-          if (taxRegion && !isEUTaxRegion) {
-            issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "EU" sein für Billing Country ${billingCountry}.`, fix: () => setTaxRegion('EU'), fixLabel: 'Tax Region → EU' });
-          }
-        } else if (billingIsNonEU) {
-          if (taxRegion && !isNonEUTaxRegion) {
-            issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Non-EU" sein für Billing Country ${billingCountry}.`, fix: () => setTaxRegion('Non-EU'), fixLabel: 'Tax Region → Non-EU' });
-          }
+      // ═══════════════════════════════════════════════════════════════
+      // REGEL 1: Österreich → 20% (Austria), kein RC, kein Nicht-steuerbar
+      // ═══════════════════════════════════════════════════════════════
+      if (billingIsAustria) {
+        if (!isAustriaTaxRegion && taxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ Kunde in Österreich → Tax Region muss "Austria" (20%) sein, nicht "${taxRegion}".`,
+            fix: () => setTaxRegion('Austria'),
+            fixLabel: 'Tax Region → Austria'
+          });
         }
-
-        if (!billingCountry) {
-          if (reverseCharge && isAustriaTaxRegion) {
-            issues.push({ type: 'error', message: '⚠️ Reverse Charge + Tax Region Austria ist nicht erlaubt. Bitte Billing Country prüfen!', fix: () => setReverseCharge(false), fixLabel: 'Reverse Charge deaktivieren' });
-          }
-          if (reverseCharge && isGermanyTaxRegion) {
-            issues.push({ type: 'error', message: '⚠️ Reverse Charge + Tax Region Germany ist nicht erlaubt. Bitte Billing Country prüfen!', fix: () => setReverseCharge(false), fixLabel: 'Reverse Charge deaktivieren' });
-          }
+        if (reverseCharge) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Reverse Charge darf bei österreichischen Kunden nicht aktiviert sein.',
+            fix: () => setReverseCharge(false),
+            fixLabel: 'RC deaktivieren'
+          });
+        }
+        if (nichtSteuerbar) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ "Nicht steuerbar" darf bei österreichischen Kunden nicht aktiviert sein.',
+            fix: () => setNichtSteuerbar(false),
+            fixLabel: 'Nicht steuerbar deaktivieren'
+          });
         }
       }
 
-      if (currentModule === 'PurchaseOrder') {
-        if (billingIsAustria && taxRegion && !isAustriaTaxRegion) {
-          issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Austria" sein für Billing Country Österreich.`, fix: () => setTaxRegion('Austria'), fixLabel: 'Tax Region → Austria' });
-        } else if (billingIsGermany) {
-          if (subjectType === 'wartung' && taxRegion && !isEUTaxRegion) {
-            issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "EU" sein für Deutschland + Wartung (W/WV).`, fix: () => setTaxRegion('EU'), fixLabel: 'Tax Region → EU' });
-          } else if (subjectType === 'handel' && taxRegion && !isGermanyTaxRegion) {
-            issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Germany (19%)" sein für Deutschland + Handel (H).`, fix: () => setTaxRegion('Germany'), fixLabel: 'Tax Region → Germany (19%)' });
-          }
-        } else if (billingIsEU && taxRegion && !isEUTaxRegion) {
-          issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "EU" sein für Billing Country ${billingCountry}.`, fix: () => setTaxRegion('EU'), fixLabel: 'Tax Region → EU' });
-        } else if (billingIsNonEU && taxRegion && !isNonEUTaxRegion) {
-          issues.push({ type: 'error', message: `⚠️ Tax Region ist "${taxRegion}", sollte aber "Non-EU" sein für Billing Country ${billingCountry}.`, fix: () => setTaxRegion('Non-EU'), fixLabel: 'Tax Region → Non-EU' });
+      // ═══════════════════════════════════════════════════════════════
+      // REGEL 2: EU (inkl. DE) MIT UID → EU Tax Region, RC aktivieren
+      // ═══════════════════════════════════════════════════════════════
+      else if ((billingIsGermany || billingIsEU) && hasVAT) {
+        if (!isEUTaxRegion && taxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Tax Region muss "EU" sein, nicht "${taxRegion}".`,
+            fix: () => setTaxRegion('EU'),
+            fixLabel: 'Tax Region → EU'
+          });
+        }
+        if (!reverseCharge) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Reverse Charge muss aktiviert sein.`,
+            fix: () => setReverseCharge(true),
+            fixLabel: 'RC aktivieren'
+          });
+        }
+        if (nichtSteuerbar) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden mit UID nicht aktiviert sein.',
+            fix: () => setNichtSteuerbar(false),
+            fixLabel: 'Nicht steuerbar deaktivieren'
+          });
         }
       }
 
-      return issues;
+      // ═══════════════════════════════════════════════════════════════
+      // REGEL 3: EU (inkl. DE) OHNE UID → 20% (Austria), kein RC
+      // ═══════════════════════════════════════════════════════════════
+      else if ((billingIsGermany || billingIsEU) && !hasVAT) {
+        if (!isAustriaTaxRegion && taxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ EU-Kunde ohne UID → Tax Region muss "Austria" (20%) sein, nicht "${taxRegion}".`,
+            fix: () => setTaxRegion('Austria'),
+            fixLabel: 'Tax Region → Austria'
+          });
+        }
+        if (reverseCharge) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Reverse Charge darf bei EU-Kunden ohne UID nicht aktiviert sein.',
+            fix: () => setReverseCharge(false),
+            fixLabel: 'RC deaktivieren'
+          });
+        }
+        if (nichtSteuerbar) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden ohne UID nicht aktiviert sein.',
+            fix: () => setNichtSteuerbar(false),
+            fixLabel: 'Nicht steuerbar deaktivieren'
+          });
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // REGEL 4: Non-EU + Wartung → Non-EU, Nicht-steuerbar aktivieren
+      // ═══════════════════════════════════════════════════════════════
+      else if (billingIsNonEU && subjectType === 'wartung') {
+        if (!isNonEUTaxRegion && taxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ Drittland + Wartung → Tax Region muss "Non-EU" sein, nicht "${taxRegion}".`,
+            fix: () => setTaxRegion('Non-EU'),
+            fixLabel: 'Tax Region → Non-EU'
+          });
+        }
+        if (!nichtSteuerbar) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Drittland + Wartung → "Nicht steuerbar" muss aktiviert sein.',
+            fix: () => setNichtSteuerbar(true),
+            fixLabel: 'Nicht steuerbar aktivieren'
+          });
+        }
+        if (reverseCharge) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Reverse Charge ist bei Drittland-Kunden nicht anwendbar.',
+            fix: () => setReverseCharge(false),
+            fixLabel: 'RC deaktivieren'
+          });
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // REGEL 5: Non-EU + Handel → Non-EU, kein Nicht-steuerbar
+      // ═══════════════════════════════════════════════════════════════
+      else if (billingIsNonEU) {
+        if (!isNonEUTaxRegion && taxRegion) {
+          issues.push({
+            type: 'error',
+            message: `⚠️ Drittland → Tax Region muss "Non-EU" sein, nicht "${taxRegion}".`,
+            fix: () => setTaxRegion('Non-EU'),
+            fixLabel: 'Tax Region → Non-EU'
+          });
+        }
+        if (reverseCharge) {
+          issues.push({
+            type: 'error',
+            message: '⚠️ Reverse Charge ist bei Drittland-Kunden nicht anwendbar.',
+            fix: () => setReverseCharge(false),
+            fixLabel: 'RC deaktivieren'
+          });
+        }
+      }
+
+      return issues.length > 0 ? issues : null;
     }
 
     function showTaxValidationPopup(issues, onFix, onIgnore) {
@@ -1507,21 +1685,24 @@
       const saveButtons = document.querySelectorAll('button[name="saveButton"],input[name="saveButton"],button.btn-success[type="submit"],[data-action="Save"],.saveButton,button[type="submit"]');
 
       saveButtons.forEach(btn => {
-        btn.addEventListener('click', function (e) {
+        btn.addEventListener('click', async function (e) {
           if (skipValidation) { skipValidation = false; return; }
 
-          const issues = validateTaxSettings();
-          if (issues && issues.length > 0) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
+          // Prevent default immediately while we await validation
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
 
+          const issues = await validateTaxSettings();
+          if (issues && issues.length > 0) {
             showTaxValidationPopup(issues,
               // Fix: Timeout auf 500ms erhöht für vtiger Tax-Rekalkulierung
               () => { issues.forEach(issue => issue.fix?.()); setTimeout(() => triggerSave(btn), 500); },
               () => { triggerSave(btn); }
             );
-            return false;
+          } else {
+            // No issues, proceed with save
+            triggerSave(btn);
           }
         }, true);
       });
