@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger SalesOrder Helper Button
 // @namespace    hw24.salesorder.helper
-// @version      1.4.0
+// @version      1.4.1
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/salesorder-autofill.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/salesorder-autofill.user.js
 // @description  Autofill für POP, Status, Reverse Charge & Produktdaten
@@ -85,8 +85,16 @@
       let end = me ? parseDateOrNull(me[1]) : null;
       if(!end){
         end = addMonthsMinusOneDay(start, duration);
-        desc = replaceLine(desc, "Service End", fmt(end));
-        desc = replaceLine(desc, "Service Ende", fmt(end));
+        // Prüfen welche Variante bereits existiert (Fix: doppeltes Service End vermeiden)
+        const hasEnglish = /Service\s*End\s*:/i.test(desc);
+        const hasGerman = /Service\s*Ende\s*:/i.test(desc);
+
+        if (hasEnglish && !hasGerman) {
+          desc = replaceLine(desc, "Service End", fmt(end));
+        } else {
+          // Standard: Deutsche Version (auch wenn keine existiert)
+          desc = replaceLine(desc, "Service Ende", fmt(end));
+        }
       }
 
       ta.value = desc;
