@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.5.0
+// @version      2.6.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -1873,7 +1873,7 @@
       });
     }
 
-    return { processEdit, processDetail, injectTotalsPanel, injectReloadButton, interceptSaveButton, waitForElement, findLineItemTable };
+    return { processEdit, processDetail, injectTotalsPanel, injectReloadButton, interceptSaveButton, waitForElement, findLineItemTable, calculateTotals };
   })();
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2460,6 +2460,261 @@
   function runUndo() { PriceMultiplier.undoChanges(); }
 
   /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 4: EMAILMAKER TOOLS
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  const EMAILMakerTools = (function () {
+    const isSalesOrder = currentModule === 'SalesOrder';
+    if (!isSalesOrder || !isDetail) return { init() {} };
+
+    const TOOLBAR_ID = 'hw24-email-toolbar';
+
+    /* ── Email toolbar button config (extensible for future tools like PerDu) ── */
+    function getToolbarButtons() {
+      return [
+        {
+          id: 'hw24-email-commission-btn',
+          label: '💼 Provision einfügen',
+          title: 'Partner-Provision in E-Mail einfügen',
+          action: insertCommission
+        }
+      ];
+    }
+
+    /* ── Find the email body editor inside the modal ── */
+    function findEmailBody(modal) {
+      // Strategy 1: iframe with contentDocument (EMAILMaker typically uses TinyMCE or similar)
+      const iframes = modal.querySelectorAll('iframe');
+      for (const iframe of iframes) {
+        try {
+          const doc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (doc?.body && doc.body.innerHTML.length > 10) return { type: 'iframe', el: iframe, doc };
+        } catch { /* cross-origin — skip */ }
+      }
+
+      // Strategy 2: contenteditable div
+      const editables = modal.querySelectorAll('[contenteditable="true"]');
+      for (const el of editables) {
+        if (el.innerHTML.length > 10) return { type: 'contenteditable', el };
+      }
+
+      // Strategy 3: textarea
+      const textareas = modal.querySelectorAll('textarea');
+      for (const ta of textareas) {
+        if (ta.value.length > 10) return { type: 'textarea', el: ta };
+      }
+
+      return null;
+    }
+
+    /* ── Detect language from email body content ── */
+    function detectLanguage(html) {
+      if (/Ebenso finden Sie/i.test(html)) return 'de';
+      if (/We also attached/i.test(html)) return 'en';
+      // Fallback heuristics
+      if (/Sehr geehrte|Auftragsbestätigung|hiermit bestätigen/i.test(html)) return 'de';
+      if (/Dear |order confirmation|hereby confirm/i.test(html)) return 'en';
+      return 'de';
+    }
+
+    /* ── Format commission amount per locale ── */
+    function formatCommission(amount, lang) {
+      if (lang === 'en') {
+        return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+      }
+      return amount.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    }
+
+    /* ── Build the commission text paragraph ── */
+    function buildCommissionText(amount, lang) {
+      const formatted = formatCommission(amount, lang);
+      if (lang === 'en') return `Your commission amounts to: ${formatted}`;
+      return `Ihr Provisionsanteil beträgt: ${formatted}`;
+    }
+
+    /* ── Insert commission into email body ── */
+    function insertCommission() {
+      const btn = document.getElementById('hw24-email-commission-btn');
+      const modal = btn?.closest('.modal, .modal-dialog, [role="dialog"], .ui-dialog, .emailmaker-modal')
+        || document.querySelector('.modal.in, .modal.show, .modal-dialog, [role="dialog"], .ui-dialog');
+      if (!modal) {
+        alert('EMAILMaker Modal nicht gefunden.');
+        return;
+      }
+
+      // Calculate totals
+      const totals = MetaOverlay.calculateTotals();
+      if (!totals.sumPC) {
+        alert('Keine Purchase-Cost-Daten vorhanden — Provision kann nicht berechnet werden.');
+        return;
+      }
+
+      // Find email body
+      const body = findEmailBody(modal);
+      if (!body) {
+        alert('E-Mail-Body nicht gefunden. Bitte prüfen Sie, ob der E-Mail-Editor geladen ist.');
+        return;
+      }
+
+      // Get HTML content
+      let html;
+      if (body.type === 'iframe') html = body.doc.body.innerHTML;
+      else if (body.type === 'contenteditable') html = body.el.innerHTML;
+      else html = body.el.value;
+
+      // Detect language
+      const lang = detectLanguage(html);
+      const commissionText = buildCommissionText(totals.partnerCommission, lang);
+
+      // Anchor sentences to insert before
+      const anchorDE = 'Ebenso finden Sie unser Servicebook im Anhang';
+      const anchorEN = 'We also attached our Servicebook.';
+      const anchor = lang === 'de' ? anchorDE : anchorEN;
+
+      let inserted = false;
+
+      if (body.type === 'textarea') {
+        // Plain text mode
+        const idx = html.indexOf(anchor);
+        if (idx !== -1) {
+          const before = html.substring(0, idx);
+          const after = html.substring(idx);
+          body.el.value = before + commissionText + '\n\n' + after;
+          inserted = true;
+        } else {
+          body.el.value = html + '\n\n' + commissionText;
+          inserted = true;
+        }
+        fire(body.el);
+      } else {
+        // HTML mode (iframe or contenteditable)
+        const target = body.type === 'iframe' ? body.doc.body : body.el;
+        const commissionHTML = `<p>${commissionText}</p>`;
+
+        // Search for anchor in the HTML
+        const anchorNode = findAnchorNode(target, anchor);
+        if (anchorNode) {
+          // Insert before the anchor paragraph
+          const anchorParent = anchorNode.nodeType === Node.TEXT_NODE
+            ? anchorNode.parentElement : anchorNode;
+          const insertBefore = anchorParent.closest('p, div, tr, li') || anchorParent;
+          if (body.type === 'iframe') {
+            const doc = body.doc;
+            const p = doc.createElement('p');
+            p.textContent = commissionText;
+            insertBefore.parentNode.insertBefore(p, insertBefore);
+            insertBefore.parentNode.insertBefore(doc.createElement('br'), insertBefore);
+          } else {
+            const p = document.createElement('p');
+            p.textContent = commissionText;
+            insertBefore.parentNode.insertBefore(p, insertBefore);
+          }
+          inserted = true;
+        } else {
+          // Fallback: append at end
+          if (body.type === 'iframe') {
+            const p = body.doc.createElement('p');
+            p.textContent = commissionText;
+            body.doc.body.appendChild(p);
+          } else {
+            target.insertAdjacentHTML('beforeend', commissionHTML);
+          }
+          inserted = true;
+        }
+      }
+
+      if (inserted && btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+        btn.textContent = '✅ Provision eingefügt';
+      }
+    }
+
+    /* ── Find a text node containing the anchor sentence ── */
+    function findAnchorNode(root, text) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+      while (walker.nextNode()) {
+        if (walker.currentNode.textContent.includes(text)) return walker.currentNode;
+      }
+      return null;
+    }
+
+    /* ── Inject toolbar into modal ── */
+    function injectEmailToolbar(modal) {
+      if (modal.querySelector('#' + TOOLBAR_ID)) return;
+
+      const toolbar = document.createElement('div');
+      toolbar.id = TOOLBAR_ID;
+      toolbar.style.cssText = 'padding:8px 12px;background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);border-bottom:1px solid #f59e0b;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;font-family:system-ui,-apple-system,sans-serif;';
+
+      const label = document.createElement('span');
+      label.textContent = '📧 E-Mail Tools:';
+      label.style.cssText = 'font-weight:600;color:#92400e;margin-right:4px;';
+      toolbar.appendChild(label);
+
+      for (const cfg of getToolbarButtons()) {
+        const btn = document.createElement('button');
+        btn.id = cfg.id;
+        btn.type = 'button';
+        btn.textContent = cfg.label;
+        btn.title = cfg.title || '';
+        btn.style.cssText = 'padding:5px 12px;font-size:12px;background:#fff;color:#1e293b;border:1px solid #d97706;border-radius:4px;cursor:pointer;font-weight:500;transition:background 0.2s,border-color 0.2s;';
+        btn.onmouseenter = () => { if (!btn.disabled) { btn.style.background = '#fffbeb'; btn.style.borderColor = '#b45309'; } };
+        btn.onmouseleave = () => { if (!btn.disabled) { btn.style.background = '#fff'; btn.style.borderColor = '#d97706'; } };
+        btn.onclick = cfg.action;
+        toolbar.appendChild(btn);
+      }
+
+      // Insert at the top of modal body or modal content
+      const modalBody = modal.querySelector('.modal-body, .modal-content, .ui-dialog-content, .dialog-body');
+      if (modalBody) {
+        modalBody.insertBefore(toolbar, modalBody.firstChild);
+      } else {
+        modal.insertBefore(toolbar, modal.firstChild);
+      }
+    }
+
+    /* ── MutationObserver to detect EMAILMaker modal ── */
+    function init() {
+      const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+            // Check if this is a modal element
+            const modal = node.matches?.('.modal, [role="dialog"], .ui-dialog')
+              ? node
+              : node.querySelector?.('.modal, [role="dialog"], .ui-dialog');
+
+            if (!modal) continue;
+
+            // Verify it's an EMAILMaker modal (look for EMAILMaker indicators)
+            const isEMAILMaker = modal.innerHTML?.includes('EMAILMaker')
+              || modal.querySelector?.('iframe[src*="EMAILMaker"], iframe[src*="emailmaker"], [class*="emailmaker"], [id*="emailmaker"], [id*="EMAILMaker"]')
+              || modal.querySelector?.('iframe[src*="emamodule"]')
+              || modal.innerHTML?.includes('emamodule');
+
+            // Also accept if modal contains an email editor (iframe with body or contenteditable)
+            const hasEditor = modal.querySelector?.('iframe, [contenteditable="true"], textarea');
+
+            if (isEMAILMaker || hasEditor) {
+              // Wait briefly for editor content to load
+              setTimeout(() => injectEmailToolbar(modal), 500);
+              // Retry once more if editor wasn't ready
+              setTimeout(() => injectEmailToolbar(modal), 1500);
+            }
+          }
+        }
+      });
+
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    return { init };
+  })();
+
+  /* ═══════════════════════════════════════════════════════════════════════════
      BOOTSTRAP
      ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -2507,6 +2762,9 @@
     await initDetail();
     if (document.readyState !== 'complete') window.addEventListener('load', () => setTimeout(initDetail, 1000));
     setTimeout(initDetail, 2000);
+
+    // EMAILMaker Tools (MutationObserver for modal detection)
+    EMAILMakerTools.init();
   }
 
 })();
