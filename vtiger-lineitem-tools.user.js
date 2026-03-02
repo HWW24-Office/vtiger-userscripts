@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.4.0
+// @version      2.4.1
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -1291,17 +1291,25 @@
     let cachedOrgId = null;
 
     function getOrganizationId() {
+      // Method 1: <a> link (Detail view of Quote/SO/Invoice)
       const orgLink = document.querySelector('a[href*="module=Accounts&view=Detail"]') ||
                       document.querySelector('a[href*="module=Organizations&view=Detail"]');
-      if (!orgLink) return null;
-      const href = orgLink.getAttribute('href');
-      const match = href.match(/record=(\d+)/);
-      return match ? match[1] : null;
+      if (orgLink) {
+        const match = orgLink.getAttribute('href').match(/record=(\d+)/);
+        if (match) return match[1];
+      }
+      // Method 2: Hidden input in Edit view (account_id reference field)
+      const hiddenInput = document.querySelector('input[name="account_id"]');
+      if (hiddenInput && hiddenInput.value) return hiddenInput.value;
+      return null;
     }
 
     async function fetchOrganizationVAT() {
       const orgId = getOrganizationId();
-      if (!orgId) return '';
+      if (!orgId) {
+        console.warn('HW24: Organization ID nicht gefunden');
+        return '';
+      }
 
       if (orgId === cachedOrgId && cachedVAT !== null) {
         return cachedVAT;
@@ -1313,19 +1321,30 @@
         const html = await r.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
 
-        const labels = [...doc.querySelectorAll('[id*="_detailView_fieldLabel_"]')];
-        const vatLabel = labels.find(l => {
-          const txt = l.textContent.toLowerCase();
-          return txt.includes('vat') || txt.includes('uid') || txt.includes('ust');
-        });
+        cachedVAT = '';
+        const isVatText = txt => txt.includes('vat') || txt.includes('uid') || txt.includes('ust');
 
+        // Method 1: Detail view field label IDs (Details tab)
+        const labels = [...doc.querySelectorAll('[id*="_detailView_fieldLabel_"]')];
+        const vatLabel = labels.find(l => isVatText(l.textContent.toLowerCase()));
         if (vatLabel) {
           const valueId = vatLabel.id.replace('fieldLabel', 'fieldValue');
           const valueEl = doc.getElementById(valueId);
           cachedVAT = (valueEl?.textContent || '').trim();
-        } else {
-          cachedVAT = '';
         }
+
+        // Method 2: Fallback for Summary view — fieldLabel/fieldValue CSS classes
+        if (!cachedVAT) {
+          const allFieldLabels = [...doc.querySelectorAll('td.fieldLabel, .fieldLabel')];
+          const vatTd = allFieldLabels.find(el => isVatText(el.textContent.toLowerCase().trim()));
+          if (vatTd) {
+            const valueSibling = vatTd.nextElementSibling;
+            if (valueSibling) {
+              cachedVAT = valueSibling.textContent.trim();
+            }
+          }
+        }
+
         cachedOrgId = orgId;
         return cachedVAT;
       } catch (e) {
