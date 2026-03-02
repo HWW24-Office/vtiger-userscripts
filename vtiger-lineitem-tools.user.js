@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.6
+// @version      2.7.7
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.6';
+  const HW24_VERSION = '2.7.7';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2853,6 +2853,9 @@
           result = result.replace(new RegExp(flexPattern, 'g'), `${salutEN[1]} ${firstName}`);
           console.log('[HW24] PerDu: EN salutation matched:', salutEN[0], '\u2192', salutEN[1], firstName);
         }
+
+        // A2) Hardcoded cleanup: remove any leftover "Herr"/"Frau"/"Mr."/"Mrs."/"Ms." + trailing space/tags
+        result = result.replace(/(?:Herr|Frau|Mr\.|Mrs\.|Ms\.)(?:\s|<[^>]*>)+/g, '');
       }
 
       // B) Multi-word phrase mappings (SPECIFIC BEFORE GENERIC)
