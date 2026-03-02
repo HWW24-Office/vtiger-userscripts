@@ -3035,6 +3035,7 @@
     /* ── Inject toolbar into the Compose Email container ── */
     function injectEmailToolbar(container) {
       if (document.getElementById(TOOLBAR_ID)) return;
+      console.log('[HW24] EMAILMakerTools: injecting toolbar into', container.className || container.id || container.tagName);
 
       const toolbar = document.createElement('div');
       toolbar.id = TOOLBAR_ID;
@@ -3080,45 +3081,68 @@
       }
     }
 
+    /* ── Find the Compose Email container (broad search) ── */
+    function findComposeContainer() {
+      // Try specific selectors first, then broader ones
+      const selectors = [
+        '#composeEmailContainer',
+        '.SendEmailFormStep2',
+        '.modelContainer',
+        '.modal.in',
+        '.modal.show',
+        '[role="dialog"]'
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        // Verify it actually contains a compose email form (CKEditor or subject field)
+        if (el.querySelector('input[name="subject"], .cke, [id^="cke_"], textarea.ckEditorSource, .cke_editable')) {
+          return el;
+        }
+      }
+      return null;
+    }
+
     /* ── Check if the Compose Email form is present and ready ── */
     function tryInjectToolbar() {
       if (document.getElementById(TOOLBAR_ID)) return;
 
-      // VTiger Compose Email selectors (SendEmailFormStep2 = the compose step after template selection)
-      const container = document.querySelector('#composeEmailContainer, .SendEmailFormStep2, .modelContainer');
+      const container = findComposeContainer();
       if (!container) return;
-
-      // Only inject if this is actually a Compose Email form (has subject field or CKEditor)
-      const isComposeEmail = container.querySelector('input[name="subject"], .cke, [id^="cke_"], textarea.ckEditorSource, .cke_editable');
-      if (!isComposeEmail) return;
 
       injectEmailToolbar(container);
     }
 
     /* ── MutationObserver to detect EMAILMaker Compose Email popup ── */
     function init() {
+      console.log('[HW24] EMAILMakerTools: init for', currentModule);
+
+      const scheduleRetries = () => {
+        setTimeout(tryInjectToolbar, 300);
+        setTimeout(tryInjectToolbar, 800);
+        setTimeout(tryInjectToolbar, 1500);
+        setTimeout(tryInjectToolbar, 3000);
+        setTimeout(tryInjectToolbar, 5000);
+      };
+
       const observer = new MutationObserver(mutations => {
         for (const mutation of mutations) {
           for (const node of mutation.addedNodes) {
             if (node.nodeType !== Node.ELEMENT_NODE) continue;
 
-            // Direct match: the added node is the compose container
+            // Direct match: the added node is a compose container or modal
             const isCompose = node.id === 'composeEmailContainer'
               || node.classList?.contains('SendEmailFormStep2')
               || node.classList?.contains('modelContainer')
               || node.matches?.('.modal, [role="dialog"]');
 
-            // Or it contains the compose container
+            // Or it contains a compose container
             const hasCompose = !isCompose && (
-              node.querySelector?.('#composeEmailContainer, .SendEmailFormStep2')
+              node.querySelector?.('#composeEmailContainer, .SendEmailFormStep2, .cke, [id^="cke_"]')
             );
 
             if (isCompose || hasCompose) {
-              // CKEditor loads asynchronously — retry at increasing intervals
-              setTimeout(tryInjectToolbar, 300);
-              setTimeout(tryInjectToolbar, 800);
-              setTimeout(tryInjectToolbar, 1500);
-              setTimeout(tryInjectToolbar, 3000);
+              scheduleRetries();
             }
           }
 
@@ -3127,14 +3151,21 @@
             const t = mutation.target;
             if (t.id === 'composeEmailContainer' || t.classList?.contains('SendEmailFormStep2')
               || t.classList?.contains('modal') || t.classList?.contains('modelContainer')) {
-              setTimeout(tryInjectToolbar, 300);
-              setTimeout(tryInjectToolbar, 1500);
+              scheduleRetries();
             }
           }
         }
       });
 
       observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
+
+      // Fallback: periodic poll every 2s (catches edge cases the observer misses)
+      const poll = setInterval(() => {
+        if (document.getElementById(TOOLBAR_ID)) return;
+        tryInjectToolbar();
+      }, 2000);
+      // Stop polling after 10 minutes
+      setTimeout(() => clearInterval(poll), 600000);
     }
 
     return { init };
