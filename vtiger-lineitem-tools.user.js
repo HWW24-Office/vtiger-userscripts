@@ -2784,17 +2784,35 @@
 
       let result = html;
 
-      // Pre-processing: normalize &nbsp; to regular spaces for reliable matching
+      // Pre-processing: normalize ALL non-breaking space variants to regular spaces
       result = result.replace(/&nbsp;/g, ' ');
+      result = result.replace(/\u00A0/g, ' ');
+      result = result.replace(/&#160;/g, ' ');
+
+      // E-early) Extract user first name from signature BEFORE replacements
+      // Look for bold name after closing formula in the ORIGINAL text
+      let userFirstName = '';
+      const closingRe = /(?:Mit freundlichen Gr\u00FC\u00DFen|Liebe Gr\u00FC\u00DFe|Kind regards)/i;
+      const closingMatch = result.match(closingRe);
+      if (closingMatch) {
+        const afterClosing = result.substring(closingMatch.index + closingMatch[0].length);
+        // Strategy 1: bold/strong tag
+        const boldMatch = afterClosing.match(/<(?:b|strong|span)[^>]*>\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/);
+        if (boldMatch) userFirstName = boldMatch[1];
+        // Strategy 2: name after <br> or </p><p> (no bold)
+        if (!userFirstName) {
+          const brMatch = afterClosing.match(/(?:<br\s*\/?>[\s]*(?:<br\s*\/?>)?|<\/p>\s*<p[^>]*>)\s*(?:<[^>]*>)*\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/);
+          if (brMatch) userFirstName = brMatch[1];
+        }
+      }
+      console.log('[HW24] PerDu: userFirstName from signature =', userFirstName || '(not found)');
 
       // A) Salutation replacements (DE + EN)
       if (firstName) {
-        // DE: Hallo/Sehr geehrte(r) Herr/Frau Nachname → Hallo Vorname
         result = result.replace(
           /(?:Sehr geehrte[r]?\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+|Hallo\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+)/g,
           `Hallo ${firstName}`
         );
-        // EN: Dear/Hello Mr./Mrs./Ms. Nachname → Dear/Hello Vorname
         result = result.replace(
           /(Dear|Hello)\s+(?:Mr\.|Mrs\.|Ms\.)\s+[\w\u00C0-\u024F]+/g,
           `$1 ${firstName}`
@@ -2803,25 +2821,23 @@
 
       // B) Multi-word phrase mappings (SPECIFIC BEFORE GENERIC)
       const phraseMappings = [
-        // Object-Sie (accusative/dative) — must come before generic verb+Sie
-        [/\bwir m\u00F6chten Sie\b/g, 'wir m\u00F6chten dich'],
-        [/\bw\u00FCrden wir Sie bitten\b/g, 'w\u00FCrden wir dich bitten'],
-        [/\bstehen wir Ihnen\b/g, 'stehen wir dir'],
-
-        // Subject-Sie (verb conjugation changes)
-        [/\bfinden Sie\b/g, 'findest du'],
-        [/\bk\u00F6nnen Sie\b/g, 'kannst du'],
-        [/\bhaben Sie\b/g, 'hast du'],
-        [/\bm\u00F6chten Sie\b/g, 'm\u00F6chtest du'],
+        // Object-Sie (accusative/dative)
+        [/\bwir m\u00F6chten Sie\b/gi, 'wir m\u00F6chten dich'],
+        [/\bw\u00FCrden wir Sie bitten\b/gi, 'w\u00FCrden wir dich bitten'],
+        [/\bstehen wir Ihnen\b/gi, 'stehen wir dir'],
+        // Subject-Sie (verb conjugation)
+        [/\bfinden Sie\b/gi, 'findest du'],
+        [/\bk\u00F6nnen Sie\b/gi, 'kannst du'],
+        [/\bhaben Sie\b/gi, 'hast du'],
+        [/\bm\u00F6chten Sie\b/gi, 'm\u00F6chtest du'],
         [/\bSollten Sie\b/g, 'Solltest du'],
         [/\bsollten Sie\b/g, 'solltest du'],
         [/\bWenn Sie\b/g, 'Wenn du'],
         [/\bwenn Sie\b/g, 'wenn du'],
-        [/\bteilen Sie uns\b/g, 'teile uns'],
+        [/\bteilen Sie uns\b/gi, 'teile uns'],
         [/\bBewerten Sie\b/g, 'Bewerte'],
-        [/\bwaren und Sie\b/g, 'warst und du'],
-
-        // Verb conjugation in du-clauses (Sie already gone, verb needs updating)
+        [/\bbewerten Sie\b/g, 'bewerte'],
+        // Verb conjugation in du-clauses
         [/\bzufrieden waren\b/g, 'zufrieden warst'],
         [/\bverl\u00E4ngern m\u00F6chten\b/g, 'verl\u00E4ngern m\u00F6chtest'],
       ];
@@ -2831,104 +2847,76 @@
 
       // C) Imperative DE (Verb + Sie → informal)
       const imperativeMappings = [
-        [/\bbewahren Sie\b/g, 'bewahre'],
-        [/\bschicken Sie\b/g, 'schick'],
-        [/\bklicken Sie\b/g, 'klick'],
+        [/\bbewahren Sie\b/gi, 'bewahre'],
+        [/\bschicken Sie\b/gi, 'schick'],
+        [/\bklicken Sie\b/gi, 'klick'],
         [/\bgeben [Ss]ie\b/g, 'gib'],
-        [/\brufen Sie\b/g, 'ruf'],
-        [/\bschreiben Sie\b/g, 'schreib'],
-        [/\bnehmen Sie\b/g, 'nimm'],
-        [/\bkontaktieren Sie\b/g, 'kontaktiere'],
-        [/\bmelden Sie\b/g, 'melde'],
-        [/\bsenden Sie\b/g, 'sende'],
-        [/\blesen Sie\b/g, 'lies'],
-        [/\bwenden Sie sich\b/g, 'wende dich'],
+        [/\brufen Sie\b/gi, 'ruf'],
+        [/\bschreiben Sie\b/gi, 'schreib'],
+        [/\bnehmen Sie\b/gi, 'nimm'],
+        [/\bkontaktieren Sie\b/gi, 'kontaktiere'],
+        [/\bmelden Sie\b/gi, 'melde'],
+        [/\bsenden Sie\b/gi, 'sende'],
+        [/\blesen Sie\b/gi, 'lies'],
+        [/\bwenden Sie sich\b/gi, 'wende dich'],
       ];
       for (const [pat, repl] of imperativeMappings) {
         result = result.replace(pat, repl);
       }
 
-      // D) Pronoun replacements DE (specific noun phrases first, then generic)
-      // Specific: "Ihr Angebot" → "das Angebot" (user preference)
+      // D) Pronoun replacements (specific noun phrases first, then generic)
       result = result.replace(/\b[Ii]hr Angebot\b/g, 'das Angebot');
       result = result.replace(/\b[Ii]hr pers\u00F6nliches Angebot\b/g, 'dein pers\u00F6nliches Angebot');
-
-      // Possessive: Ihre/Ihrem/Ihren/Ihrer → deine/deinem/deinen/deiner
+      // Possessive (case-insensitive for template typos)
       result = result.replace(/\bIhre\b/g, 'deine');
-      result = result.replace(/\bIhrem\b/g, 'deinem');
-      result = result.replace(/\bIhren\b/g, 'deinen');
-      result = result.replace(/\bIhrer\b/g, 'deiner');
-      // Lowercase variants (template typos)
       result = result.replace(/\bihre\b/g, 'deine');
+      result = result.replace(/\bIhrem\b/g, 'deinem');
       result = result.replace(/\bihrem\b/g, 'deinem');
+      result = result.replace(/\bIhren\b/g, 'deinen');
       result = result.replace(/\bihren\b/g, 'deinen');
+      result = result.replace(/\bIhrer\b/g, 'deiner');
       result = result.replace(/\bihrer\b/g, 'deiner');
-
-      // Dative: Ihnen/ihnen → dir
+      // Dative
       result = result.replace(/\bIhnen\b/g, 'dir');
       result = result.replace(/\bihnen\b/g, 'dir');
-
-      // Possessive "Ihr" (e.g. "Ihr Service-Team") → "dein"
+      // Possessive "Ihr" → "dein"
       result = result.replace(/\bIhr\b/g, 'dein');
       result = result.replace(/\bihr\b/g, 'dein');
-
-      // Reflexive: sich → dich (in these templates, "sich" refers to customer)
+      // Reflexive: sich → dich
       result = result.replace(/\bsich\b/g, 'dich');
-
       // Standalone Sie → du (final catch-all)
       result = result.replace(/\bSie\b/g, 'du');
 
-      // D2) Post-processing: capitalize after sentence boundaries
-      // Fixes "das Angebot" → "Das Angebot" and "dein ..." → "Dein ..." at sentence start
+      // D2) Capitalize after sentence boundaries (". das" → ". Das")
       result = result.replace(/([.!?]\s+)([a-z\u00E0-\u017E])/g,
         (m, sep, letter) => sep + letter.toUpperCase());
 
-      // E) Closing formula + user first name from signature
-      // Extract user first name from bold name after closing formula
-      let userFirstName = '';
-      // Try DE closings: "Mit freundlichen Grüßen" or "Liebe Grüße"
-      const deClosingPattern = /(?:Mit freundlichen Gr\u00FC\u00DFen|Liebe Gr\u00FC\u00DFe)([\s\S]*?)<(?:b|strong)[^>]*>\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/;
-      const deNameMatch = result.match(deClosingPattern);
-      if (deNameMatch) userFirstName = deNameMatch[2];
-      // Try EN closing: "Kind regards"
-      if (!userFirstName) {
-        const enNameMatch = result.match(/Kind regards([\s\S]*?)<(?:b|strong)[^>]*>\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/i);
-        if (enNameMatch) userFirstName = enNameMatch[2];
-      }
-      // Fallback: name on next line without bold (after <br> or </p><p>)
-      if (!userFirstName) {
-        const fallbackMatch = result.match(/(?:Mit freundlichen Gr\u00FC\u00DFen|Liebe Gr\u00FC\u00DFe|Kind regards)[\s\S]*?(?:<br\s*\/?>[\s]*(?:<br\s*\/?>)?|<\/p>\s*<p[^>]*>)\s*(?:<[^>]*>)*\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/i);
-        if (fallbackMatch) userFirstName = fallbackMatch[1];
-      }
-
-      // Replace closing formula and prepend user first name
+      // E) Closing formula: prepend user first name, replace MfG → Liebe Grüße
       if (userFirstName) {
+        console.log('[HW24] PerDu: inserting', userFirstName, 'before closing formula');
         const hasMfG = /Mit freundlichen Gr\u00FC\u00DFen/.test(result);
         const hasLG = /Liebe Gr\u00FC\u00DFe/.test(result);
         const hasKR = /Kind regards/i.test(result);
 
         if (hasMfG) {
-          // MfG → Vorname + Liebe Grüße
           result = result.replace(/Mit freundlichen Gr\u00FC\u00DFen/g,
             `${userFirstName}<br><br>Liebe Gr\u00FC\u00DFe`);
         } else if (hasLG) {
-          // Template already uses Liebe Grüße → prepend Vorname
           result = result.replace(/Liebe Gr\u00FC\u00DFe/g,
             `${userFirstName}<br><br>Liebe Gr\u00FC\u00DFe`);
         }
         if (hasKR) {
-          // EN: prepend Vorname before Kind regards
           result = result.replace(/(Kind regards)/gi,
             `${userFirstName}<br><br>$1`);
         }
       } else {
+        console.log('[HW24] PerDu: no user first name found, skipping signature personalization');
         result = result.replace(/Mit freundlichen Gr\u00FC\u00DFen/g, 'Liebe Gr\u00FC\u00DFe');
       }
 
       writeEmailHTML(body, result);
       perDuApplied = true;
 
-      // Notify CKEditor if applicable
       if (body.type === 'ckeditor') body.editor.fire('change');
 
       markButtonDone('hw24-email-perdu-btn', '\u2705 Per Du angewendet');
