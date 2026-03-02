@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.3
+// @version      2.7.4
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.3';
+  const HW24_VERSION = '2.7.4';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2818,15 +2818,23 @@
         }
       }
       console.log('[HW24] PerDu: userFirstName from signature =', userFirstName || '(not found)');
+      console.log('[HW24] PerDu: contact firstName =', firstName || '(not found)');
 
       // A) Salutation replacements (DE + EN)
+      // Allow HTML tags between words (CKEditor may wrap words in <span>, <b> etc.)
+      const T = '(?:\\s|<[^>]*>)*'; // zero or more whitespace/tags
       if (firstName) {
+        // Debug: show what the salutation area looks like
+        const salutMatch = result.match(/(?:Hallo|Sehr geehrte|Dear|Hello)[\s\S]{0,80}(?:Herr|Frau|Mr\.|Mrs\.|Ms\.)[\s\S]{0,40}/);
+        console.log('[HW24] PerDu: salutation area =', salutMatch ? salutMatch[0] : '(not found)');
+        // DE: "Sehr geehrter Herr Nachname" / "Hallo Herr Nachname" → "Hallo Vorname"
         result = result.replace(
-          /(?:Sehr geehrte[r]?\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+|Hallo\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+)/g,
+          new RegExp('(?:Sehr geehrte[r]?' + T + '\\s' + T + '(?:Herr|Frau)' + T + '\\s' + T + '[\\w\\u00C0-\\u024F]+|Hallo' + T + '\\s' + T + '(?:Herr|Frau)' + T + '\\s' + T + '[\\w\\u00C0-\\u024F]+)', 'g'),
           `Hallo ${firstName}`
         );
+        // EN: "Dear/Hello Mr./Mrs./Ms. Lastname" → "Dear/Hello Vorname"
         result = result.replace(
-          /(Dear|Hello)\s+(?:Mr\.|Mrs\.|Ms\.)\s+[\w\u00C0-\u024F]+/g,
+          new RegExp('(Dear|Hello)' + T + '\\s' + T + '(?:Mr\\.|Mrs\\.|Ms\\.)' + T + '\\s' + T + '[\\w\\u00C0-\\u024F]+', 'g'),
           `$1 ${firstName}`
         );
       }
@@ -2903,23 +2911,23 @@
       result = result.replace(/([.!?]\s+)([a-z\u00E0-\u017E])/g,
         (m, sep, letter) => sep + letter.toUpperCase());
 
-      // E) Closing formula: prepend user first name, replace MfG → Liebe Grüße
+      // E) Closing formula: replace MfG → Liebe Grüße, append user first name AFTER
       if (userFirstName) {
-        console.log('[HW24] PerDu: inserting', userFirstName, 'before closing formula');
+        console.log('[HW24] PerDu: inserting', userFirstName, 'after closing formula');
         const hasMfG = /Mit freundlichen Gr\u00FC\u00DFen/.test(result);
         const hasLG = /Liebe Gr\u00FC\u00DFe/.test(result);
         const hasKR = /Kind regards/i.test(result);
 
         if (hasMfG) {
           result = result.replace(/Mit freundlichen Gr\u00FC\u00DFen/g,
-            `${userFirstName}<br><br>Liebe Gr\u00FC\u00DFe`);
+            `Liebe Gr\u00FC\u00DFe<br>${userFirstName}`);
         } else if (hasLG) {
           result = result.replace(/Liebe Gr\u00FC\u00DFe/g,
-            `${userFirstName}<br><br>Liebe Gr\u00FC\u00DFe`);
+            `Liebe Gr\u00FC\u00DFe<br>${userFirstName}`);
         }
         if (hasKR) {
           result = result.replace(/(Kind regards)/gi,
-            `${userFirstName}<br><br>$1`);
+            `$1<br>${userFirstName}`);
         }
       } else {
         console.log('[HW24] PerDu: no user first name found, skipping signature personalization');
