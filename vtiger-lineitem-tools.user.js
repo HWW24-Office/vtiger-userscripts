@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.2
+// @version      2.7.3
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.2';
+  const HW24_VERSION = '2.7.3';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2787,16 +2787,16 @@
 
       let result = html;
 
-      // DEBUG: dump raw HTML from CKEditor so we can see the actual format
-      console.log('[HW24] PerDu DEBUG: raw HTML (first 800 chars):', html.substring(0, 800));
-      // Check specific patterns
-      console.log('[HW24] PerDu DEBUG: contains "können Sie"?', /können Sie/.test(html));
-      console.log('[HW24] PerDu DEBUG: contains "k&ouml;nnen"?', /k&ouml;nnen/.test(html));
-      console.log('[HW24] PerDu DEBUG: contains "Liebe Gr"?', /Liebe Gr/.test(html));
-      console.log('[HW24] PerDu DEBUG: contains "<b>"?', /<b>/.test(html));
-      console.log('[HW24] PerDu DEBUG: contains "<strong>"?', /<strong>/.test(html));
-
-      // Pre-processing: normalize ALL non-breaking space variants to regular spaces
+      // Pre-processing: decode HTML entities so regex patterns can match
+      // Umlauts and ß (CKEditor returns &ouml; instead of ö etc.)
+      result = result.replace(/&auml;/g, '\u00E4');
+      result = result.replace(/&ouml;/g, '\u00F6');
+      result = result.replace(/&uuml;/g, '\u00FC');
+      result = result.replace(/&Auml;/g, '\u00C4');
+      result = result.replace(/&Ouml;/g, '\u00D6');
+      result = result.replace(/&Uuml;/g, '\u00DC');
+      result = result.replace(/&szlig;/g, '\u00DF');
+      // Spaces
       result = result.replace(/&nbsp;/g, ' ');
       result = result.replace(/\u00A0/g, ' ');
       result = result.replace(/&#160;/g, ' ');
