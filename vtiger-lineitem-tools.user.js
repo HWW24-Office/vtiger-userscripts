@@ -2784,10 +2784,12 @@
 
       let result = html;
 
+      // Pre-processing: normalize &nbsp; to regular spaces for reliable matching
+      result = result.replace(/&nbsp;/g, ' ');
+
       // A) Salutation replacements (DE + EN)
-      // Use [\w\u00C0-\u024F] to match surnames with umlauts (Müller, Böhm, etc.)
       if (firstName) {
-        // DE: Hallo Herr/Frau Nachname → Hallo Vorname
+        // DE: Hallo/Sehr geehrte(r) Herr/Frau Nachname → Hallo Vorname
         result = result.replace(
           /(?:Sehr geehrte[r]?\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+|Hallo\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+)/g,
           `Hallo ${firstName}`
@@ -2799,18 +2801,29 @@
         );
       }
 
-      // B) Phrase-level DE (Verb + Sie → Verb + du with conjugation)
+      // B) Multi-word phrase mappings (SPECIFIC BEFORE GENERIC)
       const phraseMappings = [
+        // Object-Sie (accusative/dative) — must come before generic verb+Sie
+        [/\bwir m\u00F6chten Sie\b/g, 'wir m\u00F6chten dich'],
+        [/\bw\u00FCrden wir Sie bitten\b/g, 'w\u00FCrden wir dich bitten'],
+        [/\bstehen wir Ihnen\b/g, 'stehen wir dir'],
+
+        // Subject-Sie (verb conjugation changes)
         [/\bfinden Sie\b/g, 'findest du'],
         [/\bk\u00F6nnen Sie\b/g, 'kannst du'],
         [/\bhaben Sie\b/g, 'hast du'],
         [/\bm\u00F6chten Sie\b/g, 'm\u00F6chtest du'],
         [/\bSollten Sie\b/g, 'Solltest du'],
+        [/\bsollten Sie\b/g, 'solltest du'],
         [/\bWenn Sie\b/g, 'Wenn du'],
-        [/\bstehen wir Ihnen\b/g, 'stehen wir dir'],
-        [/\bw\u00FCrden wir Sie bitten\b/g, 'w\u00FCrden wir dich bitten'],
+        [/\bwenn Sie\b/g, 'wenn du'],
         [/\bteilen Sie uns\b/g, 'teile uns'],
-        [/\bBewerten Sie\b/g, 'Bewerte']
+        [/\bBewerten Sie\b/g, 'Bewerte'],
+        [/\bwaren und Sie\b/g, 'warst und du'],
+
+        // Verb conjugation in du-clauses (Sie already gone, verb needs updating)
+        [/\bzufrieden waren\b/g, 'zufrieden warst'],
+        [/\bverl\u00E4ngern m\u00F6chten\b/g, 'verl\u00E4ngern m\u00F6chtest'],
       ];
       for (const [pat, repl] of phraseMappings) {
         result = result.replace(pat, repl);
@@ -2821,27 +2834,54 @@
         [/\bbewahren Sie\b/g, 'bewahre'],
         [/\bschicken Sie\b/g, 'schick'],
         [/\bklicken Sie\b/g, 'klick'],
-        [/\bgeben Sie\b/g, 'gib'],
+        [/\bgeben [Ss]ie\b/g, 'gib'],
         [/\brufen Sie\b/g, 'ruf'],
         [/\bschreiben Sie\b/g, 'schreib'],
-        [/\bnehmen Sie\b/g, 'nimm']
+        [/\bnehmen Sie\b/g, 'nimm'],
+        [/\bkontaktieren Sie\b/g, 'kontaktiere'],
+        [/\bmelden Sie\b/g, 'melde'],
+        [/\bsenden Sie\b/g, 'sende'],
+        [/\blesen Sie\b/g, 'lies'],
+        [/\bwenden Sie sich\b/g, 'wende dich'],
       ];
       for (const [pat, repl] of imperativeMappings) {
         result = result.replace(pat, repl);
       }
 
-      // D) Pronoun replacements DE (specific before generic)
+      // D) Pronoun replacements DE (specific noun phrases first, then generic)
+      // Specific: "Ihr Angebot" → "das Angebot" (user preference)
+      result = result.replace(/\b[Ii]hr Angebot\b/g, 'das Angebot');
+      result = result.replace(/\b[Ii]hr pers\u00F6nliches Angebot\b/g, 'dein pers\u00F6nliches Angebot');
+
       // Possessive: Ihre/Ihrem/Ihren/Ihrer → deine/deinem/deinen/deiner
       result = result.replace(/\bIhre\b/g, 'deine');
       result = result.replace(/\bIhrem\b/g, 'deinem');
       result = result.replace(/\bIhren\b/g, 'deinen');
       result = result.replace(/\bIhrer\b/g, 'deiner');
-      // Dative: Ihnen → dir
+      // Lowercase variants (template typos)
+      result = result.replace(/\bihre\b/g, 'deine');
+      result = result.replace(/\bihrem\b/g, 'deinem');
+      result = result.replace(/\bihren\b/g, 'deinen');
+      result = result.replace(/\bihrer\b/g, 'deiner');
+
+      // Dative: Ihnen/ihnen → dir
       result = result.replace(/\bIhnen\b/g, 'dir');
-      // Possessive "Ihr " (e.g. "Ihr Angebot", "Ihr Service-Team")
+      result = result.replace(/\bihnen\b/g, 'dir');
+
+      // Possessive "Ihr" (e.g. "Ihr Service-Team") → "dein"
       result = result.replace(/\bIhr\b/g, 'dein');
-      // Standalone Sie (capital, word boundary) → du
+      result = result.replace(/\bihr\b/g, 'dein');
+
+      // Reflexive: sich → dich (in these templates, "sich" refers to customer)
+      result = result.replace(/\bsich\b/g, 'dich');
+
+      // Standalone Sie → du (final catch-all)
       result = result.replace(/\bSie\b/g, 'du');
+
+      // D2) Post-processing: capitalize after sentence boundaries
+      // Fixes "das Angebot" → "Das Angebot" and "dein ..." → "Dein ..." at sentence start
+      result = result.replace(/([.!?]\s+)([a-z\u00E0-\u017E])/g,
+        (m, sep, letter) => sep + letter.toUpperCase());
 
       // E) Closing formula + user first name from signature
       // Extract user first name from bold name after closing formula
