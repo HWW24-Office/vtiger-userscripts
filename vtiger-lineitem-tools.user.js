@@ -2468,15 +2468,23 @@
     if (!isSalesOrder || !isDetail) return { init() {} };
 
     const TOOLBAR_ID = 'hw24-email-toolbar';
+    let savedEmailData = null; // for undo
 
     /* ── Email toolbar button config (extensible for future tools like PerDu) ── */
     function getToolbarButtons() {
       return [
         {
           id: 'hw24-email-commission-btn',
-          label: '\uD83D\uDCBC Provision einfügen',
-          title: 'Partner-Provision in E-Mail einfügen',
+          label: '\uD83D\uDCBC Provision einf\u00FCgen',
+          title: 'Partner-Provision in E-Mail einf\u00FCgen',
           action: insertCommission
+        },
+        {
+          id: 'hw24-email-undo-btn',
+          label: '\u21A9 Undo',
+          title: 'Provision wieder entfernen',
+          action: undoCommission,
+          hidden: true
         }
       ];
     }
@@ -2545,11 +2553,56 @@
       return amount.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' \u20AC';
     }
 
-    /* ── Build the commission text paragraph ── */
+    /* ── Build the commission text (plain) ── */
     function buildCommissionText(amount, lang) {
       const formatted = formatCommission(amount, lang);
       if (lang === 'en') return `Your commission amounts to: ${formatted}`;
       return `Ihr Provisionsanteil betr\u00E4gt: ${formatted}`;
+    }
+
+    /* ── Extract inline style from existing paragraphs in the email body ── */
+    function extractBodyStyle(html) {
+      // Parse the HTML and find a representative <p> or <span> with inline style
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      // Look for a <p> or <span> near the anchor text or any body paragraph with style
+      const candidates = tmp.querySelectorAll('p[style], span[style], div[style], font');
+      for (const el of candidates) {
+        const text = el.textContent.trim();
+        // Skip empty or very short elements, prefer real body text
+        if (text.length < 5) continue;
+        // Return the tag name and style attribute
+        const style = el.getAttribute('style') || '';
+        const tag = el.tagName.toLowerCase();
+        // For <font> tags, extract face/size/color attributes
+        if (tag === 'font') {
+          const face = el.getAttribute('face') || '';
+          const size = el.getAttribute('size') || '';
+          const color = el.getAttribute('color') || '';
+          return { tag: 'font', style, face, size, color };
+        }
+        if (style) return { tag, style, face: '', size: '', color: '' };
+      }
+      return null;
+    }
+
+    /* ── Build the commission HTML snippet matching existing email style ── */
+    function buildCommissionHTML(commissionText, html) {
+      const bodyStyle = extractBodyStyle(html);
+      if (bodyStyle && bodyStyle.tag === 'font') {
+        // Match <font> based email templates
+        const attrs = [];
+        if (bodyStyle.face) attrs.push(`face="${bodyStyle.face}"`);
+        if (bodyStyle.size) attrs.push(`size="${bodyStyle.size}"`);
+        if (bodyStyle.color) attrs.push(`color="${bodyStyle.color}"`);
+        const fontAttrs = attrs.length ? ' ' + attrs.join(' ') : '';
+        return `<p><font${fontAttrs}>${commissionText}</font></p>`;
+      }
+      if (bodyStyle && bodyStyle.style) {
+        return `<p style="${bodyStyle.style}">${commissionText}</p>`;
+      }
+      // No style found — use a safe default matching common email fonts
+      return `<p>${commissionText}</p>`;
     }
 
     /* ── Find a text node containing the anchor sentence ── */
@@ -2559,6 +2612,42 @@
         if (walker.currentNode.textContent.includes(text)) return walker.currentNode;
       }
       return null;
+    }
+
+    /* ── Undo: restore original email body ── */
+    function undoCommission() {
+      if (!savedEmailData) return;
+
+      const container = document.querySelector('#composeEmailContainer, .SendEmailFormStep2, .modelContainer, .modal.in, .modal.show, [role="dialog"]') || document.body;
+      const body = findEmailBody(container);
+      if (!body) return;
+
+      if (body.type === 'ckeditor') {
+        body.editor.setData(savedEmailData.html);
+      } else if (body.type === 'textarea') {
+        body.el.value = savedEmailData.html;
+        fire(body.el);
+      } else if (body.type === 'iframe') {
+        body.doc.body.innerHTML = savedEmailData.html;
+      } else {
+        body.el.innerHTML = savedEmailData.html;
+      }
+
+      savedEmailData = null;
+
+      // Reset insert button
+      const insertBtn = document.getElementById('hw24-email-commission-btn');
+      if (insertBtn) {
+        insertBtn.disabled = false;
+        insertBtn.style.opacity = '';
+        insertBtn.style.cursor = 'pointer';
+        insertBtn.textContent = '\uD83D\uDCBC Provision einf\u00FCgen';
+      }
+      // Hide undo button
+      const undoBtn = document.getElementById('hw24-email-undo-btn');
+      if (undoBtn) {
+        undoBtn.style.display = 'none';
+      }
     }
 
     /* ── Insert commission into email body ── */
@@ -2589,9 +2678,13 @@
       else if (body.type === 'contenteditable') html = body.el.innerHTML;
       else html = body.el.value;
 
+      // Save original for undo
+      savedEmailData = { html, bodyType: body.type };
+
       // Detect language
       const lang = detectLanguage(html);
       const commissionText = buildCommissionText(totals.partnerCommission, lang);
+      const commissionHTML = buildCommissionHTML(commissionText, html);
 
       // Anchor sentences to insert before
       const anchorDE = 'Ebenso finden Sie unser Servicebook im Anhang';
@@ -2601,14 +2694,13 @@
       let inserted = false;
 
       if (body.type === 'ckeditor') {
-        // CKEditor: manipulate via API
         const idx = html.indexOf(anchor);
         if (idx !== -1) {
           const before = html.substring(0, idx);
           const after = html.substring(idx);
-          body.editor.setData(before + `<p>${commissionText}</p>` + after);
+          body.editor.setData(before + commissionHTML + after);
         } else {
-          body.editor.setData(html + `<p>${commissionText}</p>`);
+          body.editor.setData(html + commissionHTML);
         }
         inserted = true;
       } else if (body.type === 'textarea') {
@@ -2623,31 +2715,51 @@
         fire(body.el);
         inserted = true;
       } else {
-        // iframe or contenteditable
+        // iframe or contenteditable — insert styled element via DOM
         const target = body.type === 'iframe' ? body.doc.body : body.el;
         const ownerDoc = body.type === 'iframe' ? body.doc : document;
+        const bodyStyle = extractBodyStyle(html);
 
         const anchorNode = findAnchorNode(target, anchor);
-        if (anchorNode) {
-          const anchorParent = anchorNode.nodeType === Node.TEXT_NODE
-            ? anchorNode.parentElement : anchorNode;
-          const insertBefore = anchorParent.closest('p, div, tr, li') || anchorParent;
-          const p = ownerDoc.createElement('p');
+        const refEl = anchorNode
+          ? (anchorNode.nodeType === Node.TEXT_NODE ? anchorNode.parentElement : anchorNode).closest('p, div, tr, li')
+            || (anchorNode.nodeType === Node.TEXT_NODE ? anchorNode.parentElement : anchorNode)
+          : null;
+
+        const p = ownerDoc.createElement('p');
+        if (bodyStyle && bodyStyle.tag === 'font') {
+          const font = ownerDoc.createElement('font');
+          if (bodyStyle.face) font.setAttribute('face', bodyStyle.face);
+          if (bodyStyle.size) font.setAttribute('size', bodyStyle.size);
+          if (bodyStyle.color) font.setAttribute('color', bodyStyle.color);
+          font.textContent = commissionText;
+          p.appendChild(font);
+        } else if (bodyStyle && bodyStyle.style) {
+          p.setAttribute('style', bodyStyle.style);
           p.textContent = commissionText;
-          insertBefore.parentNode.insertBefore(p, insertBefore);
         } else {
-          const p = ownerDoc.createElement('p');
           p.textContent = commissionText;
+        }
+
+        if (refEl) {
+          refEl.parentNode.insertBefore(p, refEl);
+        } else {
           target.appendChild(p);
         }
         inserted = true;
       }
 
-      if (inserted && btn) {
-        btn.disabled = true;
-        btn.style.opacity = '0.5';
-        btn.style.cursor = 'not-allowed';
-        btn.textContent = '\u2705 Provision eingef\u00FCgt';
+      if (inserted) {
+        // Disable insert button
+        if (btn) {
+          btn.disabled = true;
+          btn.style.opacity = '0.5';
+          btn.style.cursor = 'not-allowed';
+          btn.textContent = '\u2705 Provision eingef\u00FCgt';
+        }
+        // Show undo button
+        const undoBtn = document.getElementById('hw24-email-undo-btn');
+        if (undoBtn) undoBtn.style.display = '';
       }
     }
 
@@ -2671,6 +2783,7 @@
         btn.textContent = cfg.label;
         btn.title = cfg.title || '';
         btn.style.cssText = 'padding:5px 12px;font-size:12px;background:#fff;color:#1e293b;border:1px solid #d97706;border-radius:4px;cursor:pointer;font-weight:500;transition:background 0.2s,border-color 0.2s;';
+        if (cfg.hidden) btn.style.display = 'none';
         btn.onmouseenter = () => { if (!btn.disabled) { btn.style.background = '#fffbeb'; btn.style.borderColor = '#b45309'; } };
         btn.onmouseleave = () => { if (!btn.disabled) { btn.style.background = '#fff'; btn.style.borderColor = '#d97706'; } };
         btn.onclick = cfg.action;
