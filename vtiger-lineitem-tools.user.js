@@ -17,7 +17,7 @@
      MODULE / VIEW DETECTION
      ═══════════════════════════════════════════════════════════════════════════ */
 
-  const SUPPORTED_MODULES = ['Quotes', 'SalesOrder', 'Invoice', 'PurchaseOrder', 'Products', 'Opportunity'];
+  const SUPPORTED_MODULES = ['Quotes', 'SalesOrder', 'Invoice', 'PurchaseOrder', 'Products', 'Potentials'];
   const LINEITEM_MODULES = ['Quotes', 'SalesOrder', 'Invoice', 'PurchaseOrder'];
 
   const currentModule = location.href.match(new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`))?.[1] || '';
@@ -2464,7 +2464,7 @@
      ═══════════════════════════════════════════════════════════════════════════ */
 
   const EMAILMakerTools = (function () {
-    const EMAIL_TOOL_MODULES = ['Quotes', 'SalesOrder', 'Opportunity'];
+    const EMAIL_TOOL_MODULES = ['Quotes', 'SalesOrder', 'Potentials'];
     const isSalesOrder = currentModule === 'SalesOrder';
     if (!EMAIL_TOOL_MODULES.includes(currentModule) || !isDetail) return { init() {} };
 
@@ -2527,6 +2527,8 @@
     }
 
     /* ── Email toolbar button config ── */
+    const isPotentials = currentModule === 'Potentials';
+
     function getToolbarButtons() {
       const buttons = [];
       if (isSalesOrder) {
@@ -2537,27 +2539,27 @@
           action: insertCommission
         });
       }
-      buttons.push(
-        {
-          id: 'hw24-email-perdu-btn',
-          label: '\uD83D\uDC4B Per Du',
-          title: 'E-Mail von Sie auf du umstellen',
-          action: applyPerDu
-        },
-        {
+      buttons.push({
+        id: 'hw24-email-perdu-btn',
+        label: '\uD83D\uDC4B Per Du',
+        title: 'E-Mail von Sie auf du umstellen',
+        action: applyPerDu
+      });
+      if (isPotentials) {
+        buttons.push({
           id: 'hw24-email-danke-btn',
           label: '\uD83D\uDE4F Danke',
           title: 'Danke-Satz einf\u00FCgen',
           action: applyDanke
-        },
-        {
-          id: 'hw24-email-undo-btn',
-          label: '\u21A9 Undo',
-          title: 'Letzte Aktion r\u00FCckg\u00E4ngig machen',
-          action: undoEmail,
-          hidden: true
-        }
-      );
+        });
+      }
+      buttons.push({
+        id: 'hw24-email-undo-btn',
+        label: '\u21A9 Undo',
+        title: 'Letzte Aktion r\u00FCckg\u00E4ngig machen',
+        action: undoEmail,
+        hidden: true
+      });
       return buttons;
     }
 
@@ -2783,15 +2785,16 @@
       let result = html;
 
       // A) Salutation replacements (DE + EN)
+      // Use [\w\u00C0-\u024F] to match surnames with umlauts (Müller, Böhm, etc.)
       if (firstName) {
         // DE: Hallo Herr/Frau Nachname → Hallo Vorname
         result = result.replace(
-          /(?:Sehr geehrte[r]?\s+(?:Herr|Frau)\s+\w+|Hallo\s+(?:Herr|Frau)\s+\w+)/g,
+          /(?:Sehr geehrte[r]?\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+|Hallo\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+)/g,
           `Hallo ${firstName}`
         );
         // EN: Dear/Hello Mr./Mrs./Ms. Nachname → Dear/Hello Vorname
         result = result.replace(
-          /(Dear|Hello)\s+(?:Mr\.|Mrs\.|Ms\.)\s+\w+/g,
+          /(Dear|Hello)\s+(?:Mr\.|Mrs\.|Ms\.)\s+[\w\u00C0-\u024F]+/g,
           `$1 ${firstName}`
         );
       }
@@ -2840,8 +2843,47 @@
       // Standalone Sie (capital, word boundary) → du
       result = result.replace(/\bSie\b/g, 'du');
 
-      // E) Closing formula
-      result = result.replace(/Mit freundlichen Gr\u00FC\u00DFen/g, 'Liebe Gr\u00FC\u00DFe');
+      // E) Closing formula + user first name from signature
+      // Extract user first name from bold name after closing formula
+      let userFirstName = '';
+      // Try DE closings: "Mit freundlichen Grüßen" or "Liebe Grüße"
+      const deClosingPattern = /(?:Mit freundlichen Gr\u00FC\u00DFen|Liebe Gr\u00FC\u00DFe)([\s\S]*?)<(?:b|strong)[^>]*>\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/;
+      const deNameMatch = result.match(deClosingPattern);
+      if (deNameMatch) userFirstName = deNameMatch[2];
+      // Try EN closing: "Kind regards"
+      if (!userFirstName) {
+        const enNameMatch = result.match(/Kind regards([\s\S]*?)<(?:b|strong)[^>]*>\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/i);
+        if (enNameMatch) userFirstName = enNameMatch[2];
+      }
+      // Fallback: name on next line without bold (after <br> or </p><p>)
+      if (!userFirstName) {
+        const fallbackMatch = result.match(/(?:Mit freundlichen Gr\u00FC\u00DFen|Liebe Gr\u00FC\u00DFe|Kind regards)[\s\S]*?(?:<br\s*\/?>[\s]*(?:<br\s*\/?>)?|<\/p>\s*<p[^>]*>)\s*(?:<[^>]*>)*\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/i);
+        if (fallbackMatch) userFirstName = fallbackMatch[1];
+      }
+
+      // Replace closing formula and prepend user first name
+      if (userFirstName) {
+        const hasMfG = /Mit freundlichen Gr\u00FC\u00DFen/.test(result);
+        const hasLG = /Liebe Gr\u00FC\u00DFe/.test(result);
+        const hasKR = /Kind regards/i.test(result);
+
+        if (hasMfG) {
+          // MfG → Vorname + Liebe Grüße
+          result = result.replace(/Mit freundlichen Gr\u00FC\u00DFen/g,
+            `${userFirstName}<br><br>Liebe Gr\u00FC\u00DFe`);
+        } else if (hasLG) {
+          // Template already uses Liebe Grüße → prepend Vorname
+          result = result.replace(/Liebe Gr\u00FC\u00DFe/g,
+            `${userFirstName}<br><br>Liebe Gr\u00FC\u00DFe`);
+        }
+        if (hasKR) {
+          // EN: prepend Vorname before Kind regards
+          result = result.replace(/(Kind regards)/gi,
+            `${userFirstName}<br><br>$1`);
+        }
+      } else {
+        result = result.replace(/Mit freundlichen Gr\u00FC\u00DFen/g, 'Liebe Gr\u00FC\u00DFe');
+      }
 
       writeEmailHTML(body, result);
       perDuApplied = true;
@@ -3150,7 +3192,7 @@
   }
 
   // EMAILMaker Tools (MutationObserver for modal detection)
-  // Runs on detail view for Quotes, SalesOrder, Opportunity
+  // Runs on detail view for Quotes, SalesOrder, Potentials
   if (isDetail) {
     EMAILMakerTools.init();
   }
