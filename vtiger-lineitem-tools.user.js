@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.4
+// @version      2.7.5
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.4';
+  const HW24_VERSION = '2.7.5';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2804,43 +2804,50 @@
       // E-early) Extract user first name from signature BEFORE replacements
       // Look for bold name after closing formula in the ORIGINAL text
       let userFirstName = '';
+      // Words that are NOT person names (pronouns, determiners, common words)
+      const NOT_NAMES = ['Ihr', 'Dein', 'Das', 'Die', 'Der', 'Den', 'Dem', 'Ein', 'Eine', 'Mit',
+        'Von', 'Und', 'Oder', 'Aber', 'Wenn', 'Wir', 'Uns', 'Unser', 'Service', 'Team', 'The',
+        'Your', 'Our', 'Best', 'Kind', 'Dear', 'Sent', 'From', 'Tel', 'Fax', 'Web', 'Mob'];
       const closingRe = /(?:Mit freundlichen Gr\u00FC\u00DFen|Liebe Gr\u00FC\u00DFe|Kind regards)/i;
       const closingMatch = result.match(closingRe);
       if (closingMatch) {
         const afterClosing = result.substring(closingMatch.index + closingMatch[0].length);
-        // Strategy 1: bold/strong tag
-        const boldMatch = afterClosing.match(/<(?:b|strong|span)[^>]*>\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/);
-        if (boldMatch) userFirstName = boldMatch[1];
+        // Strategy 1: bold/strong tag — extract first + last name candidate
+        const boldMatch = afterClosing.match(/<(?:b|strong|span)[^>]*>\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)(?:\s+[A-Z\u00C0-\u017E][\w\u00C0-\u024F]*)?/);
+        if (boldMatch && !NOT_NAMES.includes(boldMatch[1])) userFirstName = boldMatch[1];
         // Strategy 2: name after <br> or </p><p> (no bold)
         if (!userFirstName) {
-          const brMatch = afterClosing.match(/(?:<br\s*\/?>[\s]*(?:<br\s*\/?>)?|<\/p>\s*<p[^>]*>)\s*(?:<[^>]*>)*\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)/);
-          if (brMatch) userFirstName = brMatch[1];
+          const brMatch = afterClosing.match(/(?:<br\s*\/?>[\s]*(?:<br\s*\/?>)?|<\/p>\s*<p[^>]*>)\s*(?:<[^>]*>)*\s*([A-Z\u00C0-\u017E][a-z\u00E0-\u017E]+)(?:\s+[A-Z\u00C0-\u017E][\w\u00C0-\u024F]*)?/);
+          if (brMatch && !NOT_NAMES.includes(brMatch[1])) userFirstName = brMatch[1];
         }
       }
       console.log('[HW24] PerDu: userFirstName from signature =', userFirstName || '(not found)');
       console.log('[HW24] PerDu: contact firstName =', firstName || '(not found)');
 
       // A) Salutation replacements (DE + EN)
-      // Allow HTML tags between words (CKEditor may wrap words in <span>, <b> etc.)
-      const T = '(?:\\s|<[^>]*>)*'; // zero or more whitespace/tags
+      // S = one or more whitespace or HTML tags (word separator tolerant of CKEditor markup)
+      const S = '(?:\\s|<[^>]*>)+';
       if (firstName) {
-        // Debug: show what the salutation area looks like
-        const salutMatch = result.match(/(?:Hallo|Sehr geehrte|Dear|Hello)[\s\S]{0,80}(?:Herr|Frau|Mr\.|Mrs\.|Ms\.)[\s\S]{0,40}/);
-        console.log('[HW24] PerDu: salutation area =', salutMatch ? salutMatch[0] : '(not found)');
+        // Debug: show what the salutation area looks like in raw HTML
+        const salutMatch = result.match(/(?:Hallo|Sehr geehrte|Dear|Hello)[\s\S]{0,120}/);
+        console.log('[HW24] PerDu: salutation area =', salutMatch ? salutMatch[0].substring(0, 150) : '(not found)');
         // DE: "Sehr geehrter Herr Nachname" / "Hallo Herr Nachname" → "Hallo Vorname"
         result = result.replace(
-          new RegExp('(?:Sehr geehrte[r]?' + T + '\\s' + T + '(?:Herr|Frau)' + T + '\\s' + T + '[\\w\\u00C0-\\u024F]+|Hallo' + T + '\\s' + T + '(?:Herr|Frau)' + T + '\\s' + T + '[\\w\\u00C0-\\u024F]+)', 'g'),
+          new RegExp('(?:Sehr geehrte[r]?' + S + '(?:Herr|Frau)' + S + '[\\w\\u00C0-\\u024F]+|Hallo' + S + '(?:Herr|Frau)' + S + '[\\w\\u00C0-\\u024F]+)', 'g'),
           `Hallo ${firstName}`
         );
         // EN: "Dear/Hello Mr./Mrs./Ms. Lastname" → "Dear/Hello Vorname"
         result = result.replace(
-          new RegExp('(Dear|Hello)' + T + '\\s' + T + '(?:Mr\\.|Mrs\\.|Ms\\.)' + T + '\\s' + T + '[\\w\\u00C0-\\u024F]+', 'g'),
+          new RegExp('(Dear|Hello)' + S + '(?:Mr\\.|Mrs\\.|Ms\\.)' + S + '[\\w\\u00C0-\\u024F]+', 'g'),
           `$1 ${firstName}`
         );
       }
 
       // B) Multi-word phrase mappings (SPECIFIC BEFORE GENERIC)
       const phraseMappings = [
+        // Reflexive dative: sich ... Zeit → dir ... Zeit
+        [/\bsich ((?:noch )?(?:\w+ )*)Zeit zu nehmen\b/g, 'dir $1Zeit zu nehmen'],
+        [/\bsich Zeit\b/g, 'dir Zeit'],
         // Object-Sie (accusative/dative)
         [/\bwir m\u00F6chten Sie\b/gi, 'wir m\u00F6chten dich'],
         [/\bw\u00FCrden wir Sie bitten\b/gi, 'w\u00FCrden wir dich bitten'],
@@ -2855,6 +2862,7 @@
         [/\bWenn Sie\b/g, 'Wenn du'],
         [/\bwenn Sie\b/g, 'wenn du'],
         [/\bteilen Sie uns\b/gi, 'teile uns'],
+        [/\bschreiben Sie uns\b/gi, 'schreibe uns'],
         [/\bBewerten Sie\b/g, 'Bewerte'],
         [/\bbewerten Sie\b/g, 'bewerte'],
         // Verb conjugation in du-clauses
@@ -2887,29 +2895,31 @@
       // D) Pronoun replacements (specific noun phrases first, then generic)
       result = result.replace(/\b[Ii]hr Angebot\b/g, 'das Angebot');
       result = result.replace(/\b[Ii]hr pers\u00F6nliches Angebot\b/g, 'dein pers\u00F6nliches Angebot');
-      // Possessive (case-insensitive for template typos)
-      result = result.replace(/\bIhre\b/g, 'deine');
+      // Possessive: Uppercase Ihr→Dein (beginning of phrase/line), lowercase ihr→dein
+      result = result.replace(/\bIhre\b/g, 'Deine');
       result = result.replace(/\bihre\b/g, 'deine');
-      result = result.replace(/\bIhrem\b/g, 'deinem');
+      result = result.replace(/\bIhrem\b/g, 'Deinem');
       result = result.replace(/\bihrem\b/g, 'deinem');
-      result = result.replace(/\bIhren\b/g, 'deinen');
+      result = result.replace(/\bIhren\b/g, 'Deinen');
       result = result.replace(/\bihren\b/g, 'deinen');
-      result = result.replace(/\bIhrer\b/g, 'deiner');
+      result = result.replace(/\bIhrer\b/g, 'Deiner');
       result = result.replace(/\bihrer\b/g, 'deiner');
       // Dative
-      result = result.replace(/\bIhnen\b/g, 'dir');
+      result = result.replace(/\bIhnen\b/g, 'Dir');
       result = result.replace(/\bihnen\b/g, 'dir');
-      // Possessive "Ihr" → "dein"
-      result = result.replace(/\bIhr\b/g, 'dein');
+      // Possessive "Ihr" → "Dein" / "ihr" → "dein"
+      result = result.replace(/\bIhr\b/g, 'Dein');
       result = result.replace(/\bihr\b/g, 'dein');
-      // Reflexive: sich → dich
+      // Reflexive: sich → dich (dative cases handled in phrase mappings above)
       result = result.replace(/\bsich\b/g, 'dich');
       // Standalone Sie → du (final catch-all)
       result = result.replace(/\bSie\b/g, 'du');
 
-      // D2) Capitalize after sentence boundaries (". das" → ". Das")
-      result = result.replace(/([.!?]\s+)([a-z\u00E0-\u017E])/g,
-        (m, sep, letter) => sep + letter.toUpperCase());
+      // D2) Lowercase pronouns mid-sentence (". Dein" stays, but "für Deine" → "für deine")
+      // After sentence boundaries or line starts: keep uppercase
+      // Mid-sentence (after lowercase word + space): lowercase Dein/Deine/Dir etc.
+      result = result.replace(/(\b(?:f\u00FCr|zu|mit|auf|an|in|um|von|bei|aus|nach|vor|bis|\u00FCber|unter|zwischen|durch|gegen|ohne|wegen|trotz|seit|und|oder|aber|dass|ob|weil|wenn|als|wie|auch|noch|schon|mal|bitte|vielen|herzlichen)\s+)(D)(ein\b|eine\b|einem\b|einen\b|einer\b|ir\b)/g,
+        (m, prefix, d, suffix) => prefix + 'd' + suffix);
 
       // E) Closing formula: replace MfG → Liebe Grüße, append user first name AFTER
       if (userFirstName) {
@@ -2948,11 +2958,23 @@
       if (!data) { alert('E-Mail-Body nicht gefunden.'); return; }
       const { body, html } = data;
 
+      // Decode HTML entities first (same as PerDu) so needle strings can match
+      let result = html;
+      result = result.replace(/&auml;/g, '\u00E4');
+      result = result.replace(/&ouml;/g, '\u00F6');
+      result = result.replace(/&uuml;/g, '\u00FC');
+      result = result.replace(/&Auml;/g, '\u00C4');
+      result = result.replace(/&Ouml;/g, '\u00D6');
+      result = result.replace(/&Uuml;/g, '\u00DC');
+      result = result.replace(/&szlig;/g, '\u00DF');
+      result = result.replace(/&nbsp;/g, ' ');
+      result = result.replace(/\u00A0/g, ' ');
+      result = result.replace(/&#160;/g, ' ');
+
       const needle = 'haben Sie schon die ben\u00F6tigten Informationen f\u00FCr uns';
       // Also check du-form variant in case PerDu was already applied
       const needleDu = 'hast du schon die ben\u00F6tigten Informationen f\u00FCr uns';
 
-      let result = html;
       let found = false;
 
       if (result.includes(needle)) {
