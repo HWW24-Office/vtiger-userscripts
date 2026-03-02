@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.6.0
+// @version      2.7.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -17,7 +17,7 @@
      MODULE / VIEW DETECTION
      ═══════════════════════════════════════════════════════════════════════════ */
 
-  const SUPPORTED_MODULES = ['Quotes', 'SalesOrder', 'Invoice', 'PurchaseOrder', 'Products'];
+  const SUPPORTED_MODULES = ['Quotes', 'SalesOrder', 'Invoice', 'PurchaseOrder', 'Products', 'Opportunity'];
   const LINEITEM_MODULES = ['Quotes', 'SalesOrder', 'Invoice', 'PurchaseOrder'];
 
   const currentModule = location.href.match(new RegExp(`module=(${SUPPORTED_MODULES.join('|')})`))?.[1] || '';
@@ -2464,29 +2464,101 @@
      ═══════════════════════════════════════════════════════════════════════════ */
 
   const EMAILMakerTools = (function () {
+    const EMAIL_TOOL_MODULES = ['Quotes', 'SalesOrder', 'Opportunity'];
     const isSalesOrder = currentModule === 'SalesOrder';
-    if (!isSalesOrder || !isDetail) return { init() {} };
+    if (!EMAIL_TOOL_MODULES.includes(currentModule) || !isDetail) return { init() {} };
 
     const TOOLBAR_ID = 'hw24-email-toolbar';
     let savedEmailData = null; // for undo
+    let perDuApplied = false;  // track if PerDu was applied (for Danke form)
 
-    /* ── Email toolbar button config (extensible for future tools like PerDu) ── */
+    /* ── Contact first name fetching ── */
+    let cachedContactFirstName = null;
+
+    function getContactId() {
+      const link = document.querySelector('a[href*="module=Contacts&view=Detail"]');
+      if (!link) return null;
+      const m = link.getAttribute('href').match(/record=(\d+)/);
+      return m ? m[1] : null;
+    }
+
+    async function fetchContactFirstName(contactId) {
+      if (!contactId) return '';
+      if (cachedContactFirstName !== null) return cachedContactFirstName;
+      try {
+        const r = await fetch(`index.php?module=Contacts&view=Detail&record=${contactId}`, { credentials: 'same-origin' });
+        const html = await r.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        // Method 1: fieldLabel ID pattern (like VAT fetching)
+        const labels = [...doc.querySelectorAll('[id*="_detailView_fieldLabel_"]')];
+        const fnLabel = labels.find(l => {
+          const t = l.textContent.toLowerCase().trim();
+          return t === 'first name' || t === 'vorname' || t.includes('firstname');
+        });
+        if (fnLabel) {
+          const valueId = fnLabel.id.replace('fieldLabel', 'fieldValue');
+          const valueEl = doc.getElementById(valueId);
+          const val = (valueEl?.textContent || '').trim();
+          if (val) { cachedContactFirstName = val; return val; }
+        }
+
+        // Method 2: fieldLabel CSS class fallback
+        const allLabels = [...doc.querySelectorAll('td.fieldLabel, .fieldLabel, label')];
+        const fnTd = allLabels.find(el => {
+          const t = el.textContent.toLowerCase().trim();
+          return t === 'first name' || t === 'vorname' || t.includes('firstname');
+        });
+        if (fnTd) {
+          const valueSibling = fnTd.nextElementSibling;
+          if (valueSibling) {
+            const val = valueSibling.textContent.trim();
+            if (val) { cachedContactFirstName = val; return val; }
+          }
+        }
+
+        cachedContactFirstName = '';
+        return '';
+      } catch (e) {
+        console.error('HW24: Fehler beim Laden des Kontakt-Vornamens:', e);
+        cachedContactFirstName = '';
+        return '';
+      }
+    }
+
+    /* ── Email toolbar button config ── */
     function getToolbarButtons() {
-      return [
-        {
+      const buttons = [];
+      if (isSalesOrder) {
+        buttons.push({
           id: 'hw24-email-commission-btn',
           label: '\uD83D\uDCBC Provision einf\u00FCgen',
           title: 'Partner-Provision in E-Mail einf\u00FCgen',
           action: insertCommission
+        });
+      }
+      buttons.push(
+        {
+          id: 'hw24-email-perdu-btn',
+          label: '\uD83D\uDC4B Per Du',
+          title: 'E-Mail von Sie auf du umstellen',
+          action: applyPerDu
+        },
+        {
+          id: 'hw24-email-danke-btn',
+          label: '\uD83D\uDE4F Danke',
+          title: 'Danke-Satz einf\u00FCgen',
+          action: applyDanke
         },
         {
           id: 'hw24-email-undo-btn',
           label: '\u21A9 Undo',
-          title: 'Provision wieder entfernen',
-          action: undoCommission,
+          title: 'Letzte Aktion r\u00FCckg\u00E4ngig machen',
+          action: undoEmail,
           hidden: true
         }
-      ];
+      );
+      return buttons;
     }
 
     /* ── Get CKEditor instance for the email body ── */
@@ -2614,46 +2686,214 @@
       return null;
     }
 
+    /* ── Helper: read current email HTML ── */
+    function readEmailHTML() {
+      const container = document.querySelector('#composeEmailContainer, .SendEmailFormStep2, .modelContainer, .modal.in, .modal.show, [role="dialog"]') || document.body;
+      const body = findEmailBody(container);
+      if (!body) return null;
+      let html;
+      if (body.type === 'ckeditor') html = body.editor.getData();
+      else if (body.type === 'iframe') html = body.doc.body.innerHTML;
+      else if (body.type === 'contenteditable') html = body.el.innerHTML;
+      else html = body.el.value;
+      return { body, html };
+    }
+
+    /* ── Helper: write HTML back to email editor ── */
+    function writeEmailHTML(body, html) {
+      if (body.type === 'ckeditor') {
+        body.editor.setData(html);
+      } else if (body.type === 'textarea') {
+        body.el.value = html;
+        fire(body.el);
+      } else if (body.type === 'iframe') {
+        body.doc.body.innerHTML = html;
+      } else {
+        body.el.innerHTML = html;
+      }
+    }
+
+    /* ── Helper: save state for undo (only first save kept until undo) ── */
+    function saveForUndo(html, bodyType) {
+      if (!savedEmailData) {
+        savedEmailData = { html, bodyType };
+      }
+    }
+
+    /* ── Helper: mark a button as done ── */
+    function markButtonDone(btnId, doneLabel) {
+      const btn = document.getElementById(btnId);
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+        btn.textContent = doneLabel;
+      }
+      const undoBtn = document.getElementById('hw24-email-undo-btn');
+      if (undoBtn) undoBtn.style.display = '';
+    }
+
+    /* ── Helper: reset all action buttons ── */
+    function resetAllButtons() {
+      const resets = [
+        { id: 'hw24-email-commission-btn', label: '\uD83D\uDCBC Provision einf\u00FCgen' },
+        { id: 'hw24-email-perdu-btn', label: '\uD83D\uDC4B Per Du' },
+        { id: 'hw24-email-danke-btn', label: '\uD83D\uDE4F Danke' }
+      ];
+      for (const r of resets) {
+        const btn = document.getElementById(r.id);
+        if (btn) {
+          btn.disabled = false;
+          btn.style.opacity = '';
+          btn.style.cursor = 'pointer';
+          btn.textContent = r.label;
+        }
+      }
+      const undoBtn = document.getElementById('hw24-email-undo-btn');
+      if (undoBtn) undoBtn.style.display = 'none';
+    }
+
     /* ── Undo: restore original email body ── */
-    function undoCommission() {
+    function undoEmail() {
       if (!savedEmailData) return;
 
       const container = document.querySelector('#composeEmailContainer, .SendEmailFormStep2, .modelContainer, .modal.in, .modal.show, [role="dialog"]') || document.body;
       const body = findEmailBody(container);
       if (!body) return;
 
-      if (body.type === 'ckeditor') {
-        body.editor.setData(savedEmailData.html);
-      } else if (body.type === 'textarea') {
-        body.el.value = savedEmailData.html;
-        fire(body.el);
-      } else if (body.type === 'iframe') {
-        body.doc.body.innerHTML = savedEmailData.html;
-      } else {
-        body.el.innerHTML = savedEmailData.html;
-      }
-
+      writeEmailHTML(body, savedEmailData.html);
       savedEmailData = null;
+      perDuApplied = false;
+      resetAllButtons();
+    }
 
-      // Reset insert button
-      const insertBtn = document.getElementById('hw24-email-commission-btn');
-      if (insertBtn) {
-        insertBtn.disabled = false;
-        insertBtn.style.opacity = '';
-        insertBtn.style.cursor = 'pointer';
-        insertBtn.textContent = '\uD83D\uDCBC Provision einf\u00FCgen';
+    /* ── PerDu: Sie→du / Mr./Mrs.→Vorname transformation ── */
+    async function applyPerDu() {
+      const data = readEmailHTML();
+      if (!data) { alert('E-Mail-Body nicht gefunden.'); return; }
+      const { body, html } = data;
+
+      // Save original for undo
+      saveForUndo(html, body.type);
+
+      // Fetch contact first name
+      const contactId = getContactId();
+      const firstName = await fetchContactFirstName(contactId);
+
+      let result = html;
+
+      // A) Salutation replacements (DE + EN)
+      if (firstName) {
+        // DE: Hallo Herr/Frau Nachname → Hallo Vorname
+        result = result.replace(
+          /(?:Sehr geehrte[r]?\s+(?:Herr|Frau)\s+\w+|Hallo\s+(?:Herr|Frau)\s+\w+)/g,
+          `Hallo ${firstName}`
+        );
+        // EN: Dear/Hello Mr./Mrs./Ms. Nachname → Dear/Hello Vorname
+        result = result.replace(
+          /(Dear|Hello)\s+(?:Mr\.|Mrs\.|Ms\.)\s+\w+/g,
+          `$1 ${firstName}`
+        );
       }
-      // Hide undo button
-      const undoBtn = document.getElementById('hw24-email-undo-btn');
-      if (undoBtn) {
-        undoBtn.style.display = 'none';
+
+      // B) Phrase-level DE (Verb + Sie → Verb + du with conjugation)
+      const phraseMappings = [
+        [/\bfinden Sie\b/g, 'findest du'],
+        [/\bk\u00F6nnen Sie\b/g, 'kannst du'],
+        [/\bhaben Sie\b/g, 'hast du'],
+        [/\bm\u00F6chten Sie\b/g, 'm\u00F6chtest du'],
+        [/\bSollten Sie\b/g, 'Solltest du'],
+        [/\bWenn Sie\b/g, 'Wenn du'],
+        [/\bstehen wir Ihnen\b/g, 'stehen wir dir'],
+        [/\bw\u00FCrden wir Sie bitten\b/g, 'w\u00FCrden wir dich bitten'],
+        [/\bteilen Sie uns\b/g, 'teile uns'],
+        [/\bBewerten Sie\b/g, 'Bewerte']
+      ];
+      for (const [pat, repl] of phraseMappings) {
+        result = result.replace(pat, repl);
       }
+
+      // C) Imperative DE (Verb + Sie → informal)
+      const imperativeMappings = [
+        [/\bbewahren Sie\b/g, 'bewahre'],
+        [/\bschicken Sie\b/g, 'schick'],
+        [/\bklicken Sie\b/g, 'klick'],
+        [/\bgeben Sie\b/g, 'gib'],
+        [/\brufen Sie\b/g, 'ruf'],
+        [/\bschreiben Sie\b/g, 'schreib'],
+        [/\bnehmen Sie\b/g, 'nimm']
+      ];
+      for (const [pat, repl] of imperativeMappings) {
+        result = result.replace(pat, repl);
+      }
+
+      // D) Pronoun replacements DE (specific before generic)
+      // Possessive: Ihre/Ihrem/Ihren/Ihrer → deine/deinem/deinen/deiner
+      result = result.replace(/\bIhre\b/g, 'deine');
+      result = result.replace(/\bIhrem\b/g, 'deinem');
+      result = result.replace(/\bIhren\b/g, 'deinen');
+      result = result.replace(/\bIhrer\b/g, 'deiner');
+      // Dative: Ihnen → dir
+      result = result.replace(/\bIhnen\b/g, 'dir');
+      // Possessive "Ihr " (e.g. "Ihr Angebot", "Ihr Service-Team")
+      result = result.replace(/\bIhr\b/g, 'dein');
+      // Standalone Sie (capital, word boundary) → du
+      result = result.replace(/\bSie\b/g, 'du');
+
+      // E) Closing formula
+      result = result.replace(/Mit freundlichen Gr\u00FC\u00DFen/g, 'Liebe Gr\u00FC\u00DFe');
+
+      writeEmailHTML(body, result);
+      perDuApplied = true;
+
+      // Notify CKEditor if applicable
+      if (body.type === 'ckeditor') body.editor.fire('change');
+
+      markButtonDone('hw24-email-perdu-btn', '\u2705 Per Du angewendet');
+    }
+
+    /* ── Danke: replace info request with thank-you sentence ── */
+    function applyDanke() {
+      const data = readEmailHTML();
+      if (!data) { alert('E-Mail-Body nicht gefunden.'); return; }
+      const { body, html } = data;
+
+      const needle = 'haben Sie schon die ben\u00F6tigten Informationen f\u00FCr uns';
+      // Also check du-form variant in case PerDu was already applied
+      const needleDu = 'hast du schon die ben\u00F6tigten Informationen f\u00FCr uns';
+
+      let result = html;
+      let found = false;
+
+      if (result.includes(needle)) {
+        const replacement = perDuApplied
+          ? 'vielen Dank f\u00FCr deine Anfrage'
+          : 'vielen Dank f\u00FCr Ihre Anfrage';
+        result = result.replace(needle, replacement);
+        found = true;
+      } else if (result.includes(needleDu)) {
+        result = result.replace(needleDu, 'vielen Dank f\u00FCr deine Anfrage');
+        found = true;
+      }
+
+      if (!found) {
+        alert('Satz nicht gefunden: "' + needle + '"');
+        return;
+      }
+
+      // Save original for undo
+      saveForUndo(html, body.type);
+
+      writeEmailHTML(body, result);
+
+      // Notify CKEditor if applicable
+      if (body.type === 'ckeditor') body.editor.fire('change');
+
+      markButtonDone('hw24-email-danke-btn', '\u2705 Danke eingef\u00FCgt');
     }
 
     /* ── Insert commission into email body ── */
     function insertCommission() {
-      const btn = document.getElementById('hw24-email-commission-btn');
-
       // Calculate totals
       const totals = MetaOverlay.calculateTotals();
       if (!totals.sumPC) {
@@ -2661,30 +2901,19 @@
         return;
       }
 
-      // Find the compose email container
-      const container = document.querySelector('#composeEmailContainer, .SendEmailFormStep2, .modelContainer, .modal.in, .modal.show, [role="dialog"]') || document.body;
-
-      // Find email body
-      const body = findEmailBody(container);
-      if (!body) {
+      const data = readEmailHTML();
+      if (!data) {
         alert('E-Mail-Body nicht gefunden. Bitte pr\u00FCfen Sie, ob der E-Mail-Editor geladen ist.');
         return;
       }
-
-      // Get HTML content
-      let html;
-      if (body.type === 'ckeditor') html = body.editor.getData();
-      else if (body.type === 'iframe') html = body.doc.body.innerHTML;
-      else if (body.type === 'contenteditable') html = body.el.innerHTML;
-      else html = body.el.value;
+      const { body, html } = data;
 
       // Save original for undo
-      savedEmailData = { html, bodyType: body.type };
+      saveForUndo(html, body.type);
 
       // Detect language
       const lang = detectLanguage(html);
       const commissionText = buildCommissionText(totals.partnerCommission, lang);
-      const commissionHTML = buildCommissionHTML(commissionText, html);
 
       // Anchor sentences to insert before
       const anchorDE = 'Ebenso finden Sie unser Servicebook im Anhang';
@@ -2711,7 +2940,6 @@
         let root; // the live editable DOM element
         let ownerDoc;
         if (body.type === 'ckeditor') {
-          // CKEditor: access the native editable element directly
           const editable = body.editor.editable();
           root = editable ? editable.$ : null;
           ownerDoc = root ? root.ownerDocument : document;
@@ -2724,7 +2952,6 @@
         }
 
         if (root) {
-          // Build new <p> matching existing body style
           const bodyStyle = extractBodyStyle(html);
           const newP = ownerDoc.createElement('p');
           if (bodyStyle && bodyStyle.tag === 'font') {
@@ -2741,7 +2968,6 @@
             newP.textContent = commissionText;
           }
 
-          // Find anchor node in the live DOM and insert before its block
           const anchorNode = findAnchorNode(root, anchor);
           if (anchorNode) {
             const anchorEl = anchorNode.nodeType === Node.TEXT_NODE
@@ -2752,7 +2978,6 @@
             root.appendChild(newP);
           }
 
-          // Notify CKEditor that content changed (so it syncs internally)
           if (body.type === 'ckeditor') {
             body.editor.fire('change');
           }
@@ -2761,16 +2986,7 @@
       }
 
       if (inserted) {
-        // Disable insert button
-        if (btn) {
-          btn.disabled = true;
-          btn.style.opacity = '0.5';
-          btn.style.cursor = 'not-allowed';
-          btn.textContent = '\u2705 Provision eingef\u00FCgt';
-        }
-        // Show undo button
-        const undoBtn = document.getElementById('hw24-email-undo-btn');
-        if (undoBtn) undoBtn.style.display = '';
+        markButtonDone('hw24-email-commission-btn', '\u2705 Provision eingef\u00FCgt');
       }
     }
 
@@ -2931,7 +3147,11 @@
     if (document.readyState !== 'complete') window.addEventListener('load', () => setTimeout(initDetail, 1000));
     setTimeout(initDetail, 2000);
 
-    // EMAILMaker Tools (MutationObserver for modal detection)
+  }
+
+  // EMAILMaker Tools (MutationObserver for modal detection)
+  // Runs on detail view for Quotes, SalesOrder, Opportunity
+  if (isDetail) {
     EMAILMakerTools.init();
   }
 
