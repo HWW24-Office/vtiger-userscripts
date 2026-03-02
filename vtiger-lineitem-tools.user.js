@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.4.1
+// @version      2.5.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -707,8 +707,36 @@
       return desc.replace(/\\n/g, '\n');
     }
 
+    function fixLabelTypos(desc) {
+      // Common misspellings of "Service"
+      const svcTypos = 'Servcie|Servce|Serivce|Sevice|Srevice|Srvice';
+      // Common misspellings of "Start"
+      const startTypos = 'Satrt|Strat|Strart|Statr|Sart|Strt|Starrt|Tsart';
+      // Common misspellings of "Ende"
+      const endeTypos = 'Ened|Edne|Ennde';
+      // Common misspellings of "End"
+      const endTypos = 'Edn|Ned|Eend';
+
+      let r = desc;
+      // Service Start: — typo in "Service", "Start", or both
+      r = r.replace(new RegExp(`^(\\s*)(?:${svcTypos})\\s+(Start|${startTypos})\\s*:`, 'gim'), '$1Service Start:');
+      r = r.replace(new RegExp(`^(\\s*)Service\\s+(${startTypos})\\s*:`, 'gim'), '$1Service Start:');
+      // Service Ende: — typo in "Service", "Ende", or both
+      r = r.replace(new RegExp(`^(\\s*)(?:${svcTypos})\\s+(Ende|${endeTypos})\\s*:`, 'gim'), '$1Service Ende:');
+      r = r.replace(new RegExp(`^(\\s*)Service\\s+(${endeTypos})\\s*:`, 'gim'), '$1Service Ende:');
+      // Service End: — typo in "Service", "End", or both
+      r = r.replace(new RegExp(`^(\\s*)(?:${svcTypos})\\s+(End|${endTypos})\\s*:`, 'gim'), '$1Service End:');
+      r = r.replace(new RegExp(`^(\\s*)Service\\s+(${endTypos})\\s*:`, 'gim'), '$1Service End:');
+      // Standort:
+      r = r.replace(/^(\s*)(?:Standrot|Standord|Stnadort|Stadnort|Standrt)\s*:/gim, '$1Standort:');
+      // inkl.: / incl.:
+      r = r.replace(/^(\s*)(?:inlk\.|ilnk\.)\s*:/gim, '$1inkl.:');
+      r = r.replace(/^(\s*)(?:inlc\.|ilnc\.)\s*:/gim, '$1incl.:');
+      return r;
+    }
+
     function applyAllFixes(desc) {
-      return fixServiceDates(fixSerialFormat(fixLiteralNewlines(desc)));
+      return fixServiceDates(fixSerialFormat(fixLabelTypos(fixLiteralNewlines(desc))));
     }
 
     /* Render Helpers */
