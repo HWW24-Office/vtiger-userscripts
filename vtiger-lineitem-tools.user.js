@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.5
+// @version      2.7.6
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.5';
+  const HW24_VERSION = '2.7.6';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2825,22 +2825,34 @@
       console.log('[HW24] PerDu: contact firstName =', firstName || '(not found)');
 
       // A) Salutation replacements (DE + EN)
-      // S = one or more whitespace or HTML tags (word separator tolerant of CKEditor markup)
-      const S = '(?:\\s|<[^>]*>)+';
+      // Strategy: strip HTML tags to find salutation in plain text, then build a
+      // flexible regex from the matched words that allows any tags between them.
+      // This reliably handles CKEditor wrapping words in <span>, <b>, <font> etc.
+      const escRx = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const TAG_SEP = '(?:\\s|<[^>]*>)*'; // zero or more whitespace/tags between words
       if (firstName) {
-        // Debug: show what the salutation area looks like in raw HTML
-        const salutMatch = result.match(/(?:Hallo|Sehr geehrte|Dear|Hello)[\s\S]{0,120}/);
-        console.log('[HW24] PerDu: salutation area =', salutMatch ? salutMatch[0].substring(0, 150) : '(not found)');
+        const plainText = result.replace(/<[^>]*>/g, '');
+        console.log('[HW24] PerDu: plainText salutation area =', plainText.substring(0, 200));
+
         // DE: "Sehr geehrter Herr Nachname" / "Hallo Herr Nachname" → "Hallo Vorname"
-        result = result.replace(
-          new RegExp('(?:Sehr geehrte[r]?' + S + '(?:Herr|Frau)' + S + '[\\w\\u00C0-\\u024F]+|Hallo' + S + '(?:Herr|Frau)' + S + '[\\w\\u00C0-\\u024F]+)', 'g'),
-          `Hallo ${firstName}`
-        );
+        const salutDE = plainText.match(/(?:Sehr geehrte[r]?\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+|Hallo\s+(?:Herr|Frau)\s+[\w\u00C0-\u024F]+)/);
+        if (salutDE) {
+          const words = salutDE[0].split(/\s+/);
+          const flexPattern = words.map(w => escRx(w)).join(TAG_SEP + '\\s?' + TAG_SEP);
+          result = result.replace(new RegExp(flexPattern, 'g'), `Hallo ${firstName}`);
+          console.log('[HW24] PerDu: DE salutation matched:', salutDE[0], '\u2192 Hallo', firstName);
+        } else {
+          console.log('[HW24] PerDu: DE salutation NOT found in plain text');
+        }
+
         // EN: "Dear/Hello Mr./Mrs./Ms. Lastname" → "Dear/Hello Vorname"
-        result = result.replace(
-          new RegExp('(Dear|Hello)' + S + '(?:Mr\\.|Mrs\\.|Ms\\.)' + S + '[\\w\\u00C0-\\u024F]+', 'g'),
-          `$1 ${firstName}`
-        );
+        const salutEN = plainText.match(/(Dear|Hello)\s+(?:Mr\.|Mrs\.|Ms\.)\s+[\w\u00C0-\u024F]+/);
+        if (salutEN) {
+          const words = salutEN[0].split(/\s+/);
+          const flexPattern = words.map(w => escRx(w)).join(TAG_SEP + '\\s?' + TAG_SEP);
+          result = result.replace(new RegExp(flexPattern, 'g'), `${salutEN[1]} ${firstName}`);
+          console.log('[HW24] PerDu: EN salutation matched:', salutEN[0], '\u2192', salutEN[1], firstName);
+        }
       }
 
       // B) Multi-word phrase mappings (SPECIFIC BEFORE GENERIC)
@@ -2915,7 +2927,15 @@
       // Standalone Sie → du (final catch-all)
       result = result.replace(/\bSie\b/g, 'du');
 
-      // D2) Lowercase pronouns mid-sentence (". Dein" stays, but "für Deine" → "für deine")
+      // D2) Fix leftover unconjugated verbs (HTML tags between words prevented phrase/imperative match)
+      result = result.replace(/\bschreiben uns\b/g, 'schreib uns');
+      result = result.replace(/\bschreiben du\b/g, 'schreibst du');
+      result = result.replace(/\brufen du\b/g, 'rufst du');
+      result = result.replace(/\bgeben du\b/g, 'gibst du');
+      result = result.replace(/\bnehmen du\b/g, 'nimmst du');
+      result = result.replace(/\blesen du\b/g, 'liest du');
+
+      // D3) Lowercase pronouns mid-sentence (". Dein" stays, but "für Deine" → "für deine")
       // After sentence boundaries or line starts: keep uppercase
       // Mid-sentence (after lowercase word + space): lowercase Dein/Deine/Dir etc.
       result = result.replace(/(\b(?:f\u00FCr|zu|mit|auf|an|in|um|von|bei|aus|nach|vor|bis|\u00FCber|unter|zwischen|durch|gegen|ohne|wegen|trotz|seit|und|oder|aber|dass|ob|weil|wenn|als|wie|auch|noch|schon|mal|bitte|vielen|herzlichen)\s+)(D)(ein\b|eine\b|einem\b|einen\b|einer\b|ir\b)/g,
@@ -2972,19 +2992,27 @@
       result = result.replace(/&#160;/g, ' ');
 
       const needle = 'haben Sie schon die ben\u00F6tigten Informationen f\u00FCr uns';
+      const needleQ = needle + '?';
       // Also check du-form variant in case PerDu was already applied
       const needleDu = 'hast du schon die ben\u00F6tigten Informationen f\u00FCr uns';
+      const needleDuQ = needleDu + '?';
 
       let found = false;
+      const replSie = 'vielen Dank f\u00FCr Ihre Anfrage.';
+      const replDu = 'vielen Dank f\u00FCr deine Anfrage.';
 
-      if (result.includes(needle)) {
-        const replacement = perDuApplied
-          ? 'vielen Dank f\u00FCr deine Anfrage'
-          : 'vielen Dank f\u00FCr Ihre Anfrage';
-        result = result.replace(needle, replacement);
+      // Try with question mark first (replace ? → .), then without
+      if (result.includes(needleQ)) {
+        result = result.replace(needleQ, perDuApplied ? replDu : replSie);
+        found = true;
+      } else if (result.includes(needle)) {
+        result = result.replace(needle, perDuApplied ? replDu : replSie);
+        found = true;
+      } else if (result.includes(needleDuQ)) {
+        result = result.replace(needleDuQ, replDu);
         found = true;
       } else if (result.includes(needleDu)) {
-        result = result.replace(needleDu, 'vielen Dank f\u00FCr deine Anfrage');
+        result = result.replace(needleDu, replDu);
         found = true;
       }
 
