@@ -2474,17 +2474,38 @@
       return [
         {
           id: 'hw24-email-commission-btn',
-          label: '💼 Provision einfügen',
+          label: '\uD83D\uDCBC Provision einfügen',
           title: 'Partner-Provision in E-Mail einfügen',
           action: insertCommission
         }
       ];
     }
 
-    /* ── Find the email body editor inside the modal ── */
-    function findEmailBody(modal) {
-      // Strategy 1: iframe with contentDocument (EMAILMaker typically uses TinyMCE or similar)
-      const iframes = modal.querySelectorAll('iframe');
+    /* ── Get CKEditor instance for the email body ── */
+    function getCKEditorInstance() {
+      if (typeof CKEDITOR === 'undefined' || !CKEDITOR.instances) return null;
+      // Find the email body editor — try common field names
+      for (const name of ['description', 'email_body', 'body']) {
+        if (CKEDITOR.instances[name]) return CKEDITOR.instances[name];
+      }
+      // Fallback: return first available instance
+      const keys = Object.keys(CKEDITOR.instances);
+      return keys.length ? CKEDITOR.instances[keys[keys.length - 1]] : null;
+    }
+
+    /* ── Find the email body editor (CKEditor → iframe → contenteditable → textarea) ── */
+    function findEmailBody(container) {
+      // Strategy 1: CKEditor API (VTiger uses CKEditor for Compose Email)
+      const ckInstance = getCKEditorInstance();
+      if (ckInstance) {
+        try {
+          const data = ckInstance.getData();
+          if (data && data.length > 10) return { type: 'ckeditor', editor: ckInstance };
+        } catch { /* editor not ready */ }
+      }
+
+      // Strategy 2: iframe with contentDocument (CKEditor creates an iframe)
+      const iframes = container.querySelectorAll('iframe');
       for (const iframe of iframes) {
         try {
           const doc = iframe.contentDocument || iframe.contentWindow?.document;
@@ -2492,16 +2513,16 @@
         } catch { /* cross-origin — skip */ }
       }
 
-      // Strategy 2: contenteditable div
-      const editables = modal.querySelectorAll('[contenteditable="true"]');
+      // Strategy 3: contenteditable div
+      const editables = container.querySelectorAll('[contenteditable="true"]');
       for (const el of editables) {
         if (el.innerHTML.length > 10) return { type: 'contenteditable', el };
       }
 
-      // Strategy 3: textarea
-      const textareas = modal.querySelectorAll('textarea');
+      // Strategy 4: textarea (raw source mode)
+      const textareas = container.querySelectorAll('textarea');
       for (const ta of textareas) {
-        if (ta.value.length > 10) return { type: 'textarea', el: ta };
+        if (ta.value.length > 10 && !ta.classList.contains('cke_source')) return { type: 'textarea', el: ta };
       }
 
       return null;
@@ -2511,7 +2532,6 @@
     function detectLanguage(html) {
       if (/Ebenso finden Sie/i.test(html)) return 'de';
       if (/We also attached/i.test(html)) return 'en';
-      // Fallback heuristics
       if (/Sehr geehrte|Auftragsbestätigung|hiermit bestätigen/i.test(html)) return 'de';
       if (/Dear |order confirmation|hereby confirm/i.test(html)) return 'en';
       return 'de';
@@ -2520,45 +2540,52 @@
     /* ── Format commission amount per locale ── */
     function formatCommission(amount, lang) {
       if (lang === 'en') {
-        return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+        return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' \u20AC';
       }
-      return amount.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+      return amount.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' \u20AC';
     }
 
     /* ── Build the commission text paragraph ── */
     function buildCommissionText(amount, lang) {
       const formatted = formatCommission(amount, lang);
       if (lang === 'en') return `Your commission amounts to: ${formatted}`;
-      return `Ihr Provisionsanteil beträgt: ${formatted}`;
+      return `Ihr Provisionsanteil betr\u00E4gt: ${formatted}`;
+    }
+
+    /* ── Find a text node containing the anchor sentence ── */
+    function findAnchorNode(root, text) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+      while (walker.nextNode()) {
+        if (walker.currentNode.textContent.includes(text)) return walker.currentNode;
+      }
+      return null;
     }
 
     /* ── Insert commission into email body ── */
     function insertCommission() {
       const btn = document.getElementById('hw24-email-commission-btn');
-      const modal = btn?.closest('.modal, .modal-dialog, [role="dialog"], .ui-dialog, .emailmaker-modal')
-        || document.querySelector('.modal.in, .modal.show, .modal-dialog, [role="dialog"], .ui-dialog');
-      if (!modal) {
-        alert('EMAILMaker Modal nicht gefunden.');
-        return;
-      }
 
       // Calculate totals
       const totals = MetaOverlay.calculateTotals();
       if (!totals.sumPC) {
-        alert('Keine Purchase-Cost-Daten vorhanden — Provision kann nicht berechnet werden.');
+        alert('Keine Purchase-Cost-Daten vorhanden \u2014 Provision kann nicht berechnet werden.');
         return;
       }
 
+      // Find the compose email container
+      const container = document.querySelector('#composeEmailContainer, .SendEmailFormStep2, .modelContainer, .modal.in, .modal.show, [role="dialog"]') || document.body;
+
       // Find email body
-      const body = findEmailBody(modal);
+      const body = findEmailBody(container);
       if (!body) {
-        alert('E-Mail-Body nicht gefunden. Bitte prüfen Sie, ob der E-Mail-Editor geladen ist.');
+        alert('E-Mail-Body nicht gefunden. Bitte pr\u00FCfen Sie, ob der E-Mail-Editor geladen ist.');
         return;
       }
 
       // Get HTML content
       let html;
-      if (body.type === 'iframe') html = body.doc.body.innerHTML;
+      if (body.type === 'ckeditor') html = body.editor.getData();
+      else if (body.type === 'iframe') html = body.doc.body.innerHTML;
       else if (body.type === 'contenteditable') html = body.el.innerHTML;
       else html = body.el.value;
 
@@ -2573,83 +2600,67 @@
 
       let inserted = false;
 
-      if (body.type === 'textarea') {
-        // Plain text mode
+      if (body.type === 'ckeditor') {
+        // CKEditor: manipulate via API
+        const idx = html.indexOf(anchor);
+        if (idx !== -1) {
+          const before = html.substring(0, idx);
+          const after = html.substring(idx);
+          body.editor.setData(before + `<p>${commissionText}</p>` + after);
+        } else {
+          body.editor.setData(html + `<p>${commissionText}</p>`);
+        }
+        inserted = true;
+      } else if (body.type === 'textarea') {
         const idx = html.indexOf(anchor);
         if (idx !== -1) {
           const before = html.substring(0, idx);
           const after = html.substring(idx);
           body.el.value = before + commissionText + '\n\n' + after;
-          inserted = true;
         } else {
           body.el.value = html + '\n\n' + commissionText;
-          inserted = true;
         }
         fire(body.el);
+        inserted = true;
       } else {
-        // HTML mode (iframe or contenteditable)
+        // iframe or contenteditable
         const target = body.type === 'iframe' ? body.doc.body : body.el;
-        const commissionHTML = `<p>${commissionText}</p>`;
+        const ownerDoc = body.type === 'iframe' ? body.doc : document;
 
-        // Search for anchor in the HTML
         const anchorNode = findAnchorNode(target, anchor);
         if (anchorNode) {
-          // Insert before the anchor paragraph
           const anchorParent = anchorNode.nodeType === Node.TEXT_NODE
             ? anchorNode.parentElement : anchorNode;
           const insertBefore = anchorParent.closest('p, div, tr, li') || anchorParent;
-          if (body.type === 'iframe') {
-            const doc = body.doc;
-            const p = doc.createElement('p');
-            p.textContent = commissionText;
-            insertBefore.parentNode.insertBefore(p, insertBefore);
-            insertBefore.parentNode.insertBefore(doc.createElement('br'), insertBefore);
-          } else {
-            const p = document.createElement('p');
-            p.textContent = commissionText;
-            insertBefore.parentNode.insertBefore(p, insertBefore);
-          }
-          inserted = true;
+          const p = ownerDoc.createElement('p');
+          p.textContent = commissionText;
+          insertBefore.parentNode.insertBefore(p, insertBefore);
         } else {
-          // Fallback: append at end
-          if (body.type === 'iframe') {
-            const p = body.doc.createElement('p');
-            p.textContent = commissionText;
-            body.doc.body.appendChild(p);
-          } else {
-            target.insertAdjacentHTML('beforeend', commissionHTML);
-          }
-          inserted = true;
+          const p = ownerDoc.createElement('p');
+          p.textContent = commissionText;
+          target.appendChild(p);
         }
+        inserted = true;
       }
 
       if (inserted && btn) {
         btn.disabled = true;
         btn.style.opacity = '0.5';
         btn.style.cursor = 'not-allowed';
-        btn.textContent = '✅ Provision eingefügt';
+        btn.textContent = '\u2705 Provision eingef\u00FCgt';
       }
     }
 
-    /* ── Find a text node containing the anchor sentence ── */
-    function findAnchorNode(root, text) {
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-      while (walker.nextNode()) {
-        if (walker.currentNode.textContent.includes(text)) return walker.currentNode;
-      }
-      return null;
-    }
-
-    /* ── Inject toolbar into modal ── */
-    function injectEmailToolbar(modal) {
-      if (modal.querySelector('#' + TOOLBAR_ID)) return;
+    /* ── Inject toolbar into the Compose Email container ── */
+    function injectEmailToolbar(container) {
+      if (document.getElementById(TOOLBAR_ID)) return;
 
       const toolbar = document.createElement('div');
       toolbar.id = TOOLBAR_ID;
-      toolbar.style.cssText = 'padding:8px 12px;background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);border-bottom:1px solid #f59e0b;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;font-family:system-ui,-apple-system,sans-serif;';
+      toolbar.style.cssText = 'padding:8px 12px;background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);border-bottom:1px solid #f59e0b;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;font-family:system-ui,-apple-system,sans-serif;z-index:1000;';
 
       const label = document.createElement('span');
-      label.textContent = '📧 E-Mail Tools:';
+      label.textContent = '\uD83D\uDCE7 E-Mail Tools:';
       label.style.cssText = 'font-weight:600;color:#92400e;margin-right:4px;';
       toolbar.appendChild(label);
 
@@ -2666,49 +2677,82 @@
         toolbar.appendChild(btn);
       }
 
-      // Insert at the top of modal body or modal content
-      const modalBody = modal.querySelector('.modal-body, .modal-content, .ui-dialog-content, .dialog-body');
+      // Insert at top of modal-body, or before CKEditor toolbar, or as first child
+      const modalBody = container.querySelector('.modal-body');
       if (modalBody) {
-        modalBody.insertBefore(toolbar, modalBody.firstChild);
+        // Inside modal-body: insert before the editor area
+        const editorWrap = modalBody.querySelector('.cke, .cke_inner, .cke_top, #cke_description, #cke_email_body');
+        if (editorWrap) {
+          editorWrap.parentNode.insertBefore(toolbar, editorWrap);
+        } else {
+          modalBody.appendChild(toolbar);
+        }
       } else {
-        modal.insertBefore(toolbar, modal.firstChild);
+        // Fallback: insert before CKEditor or at end of container
+        const editorWrap = container.querySelector('.cke, #cke_description, #cke_email_body');
+        if (editorWrap) {
+          editorWrap.parentNode.insertBefore(toolbar, editorWrap);
+        } else {
+          container.appendChild(toolbar);
+        }
       }
     }
 
-    /* ── MutationObserver to detect EMAILMaker modal ── */
+    /* ── Check if the Compose Email form is present and ready ── */
+    function tryInjectToolbar() {
+      if (document.getElementById(TOOLBAR_ID)) return;
+
+      // VTiger Compose Email selectors (SendEmailFormStep2 = the compose step after template selection)
+      const container = document.querySelector('#composeEmailContainer, .SendEmailFormStep2, .modelContainer');
+      if (!container) return;
+
+      // Only inject if this is actually a Compose Email form (has subject field or CKEditor)
+      const isComposeEmail = container.querySelector('input[name="subject"], .cke, [id^="cke_"], textarea.ckEditorSource, .cke_editable');
+      if (!isComposeEmail) return;
+
+      injectEmailToolbar(container);
+    }
+
+    /* ── MutationObserver to detect EMAILMaker Compose Email popup ── */
     function init() {
       const observer = new MutationObserver(mutations => {
         for (const mutation of mutations) {
           for (const node of mutation.addedNodes) {
             if (node.nodeType !== Node.ELEMENT_NODE) continue;
 
-            // Check if this is a modal element
-            const modal = node.matches?.('.modal, [role="dialog"], .ui-dialog')
-              ? node
-              : node.querySelector?.('.modal, [role="dialog"], .ui-dialog');
+            // Direct match: the added node is the compose container
+            const isCompose = node.id === 'composeEmailContainer'
+              || node.classList?.contains('SendEmailFormStep2')
+              || node.classList?.contains('modelContainer')
+              || node.matches?.('.modal, [role="dialog"]');
 
-            if (!modal) continue;
+            // Or it contains the compose container
+            const hasCompose = !isCompose && (
+              node.querySelector?.('#composeEmailContainer, .SendEmailFormStep2')
+            );
 
-            // Verify it's an EMAILMaker modal (look for EMAILMaker indicators)
-            const isEMAILMaker = modal.innerHTML?.includes('EMAILMaker')
-              || modal.querySelector?.('iframe[src*="EMAILMaker"], iframe[src*="emailmaker"], [class*="emailmaker"], [id*="emailmaker"], [id*="EMAILMaker"]')
-              || modal.querySelector?.('iframe[src*="emamodule"]')
-              || modal.innerHTML?.includes('emamodule');
+            if (isCompose || hasCompose) {
+              // CKEditor loads asynchronously — retry at increasing intervals
+              setTimeout(tryInjectToolbar, 300);
+              setTimeout(tryInjectToolbar, 800);
+              setTimeout(tryInjectToolbar, 1500);
+              setTimeout(tryInjectToolbar, 3000);
+            }
+          }
 
-            // Also accept if modal contains an email editor (iframe with body or contenteditable)
-            const hasEditor = modal.querySelector?.('iframe, [contenteditable="true"], textarea');
-
-            if (isEMAILMaker || hasEditor) {
-              // Wait briefly for editor content to load
-              setTimeout(() => injectEmailToolbar(modal), 500);
-              // Retry once more if editor wasn't ready
-              setTimeout(() => injectEmailToolbar(modal), 1500);
+          // Also check attribute changes (e.g. modal becoming visible via class change)
+          if (mutation.type === 'attributes' && mutation.target.nodeType === Node.ELEMENT_NODE) {
+            const t = mutation.target;
+            if (t.id === 'composeEmailContainer' || t.classList?.contains('SendEmailFormStep2')
+              || t.classList?.contains('modal') || t.classList?.contains('modelContainer')) {
+              setTimeout(tryInjectToolbar, 300);
+              setTimeout(tryInjectToolbar, 1500);
             }
           }
         }
       });
 
-      observer.observe(document.body, { childList: true, subtree: true });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
     }
 
     return { init };
