@@ -2706,50 +2706,58 @@
         fire(body.el);
         inserted = true;
       } else {
-        // HTML modes (ckeditor, iframe, contenteditable)
-        // Parse into a temporary DOM so we insert *between* block elements
-        // instead of splitting raw HTML strings (which breaks tags/styles).
-        const tmp = document.createElement('div');
-        tmp.innerHTML = html;
-
-        // Build the new <p> matching existing body style
-        const bodyStyle = extractBodyStyle(html);
-        const newP = document.createElement('p');
-        if (bodyStyle && bodyStyle.tag === 'font') {
-          const font = document.createElement('font');
-          if (bodyStyle.face) font.setAttribute('face', bodyStyle.face);
-          if (bodyStyle.size) font.setAttribute('size', bodyStyle.size);
-          if (bodyStyle.color) font.setAttribute('color', bodyStyle.color);
-          font.textContent = commissionText;
-          newP.appendChild(font);
-        } else if (bodyStyle && bodyStyle.style) {
-          newP.setAttribute('style', bodyStyle.style);
-          newP.textContent = commissionText;
-        } else {
-          newP.textContent = commissionText;
-        }
-
-        // Find the anchor text node and its containing block element
-        const anchorNode = findAnchorNode(tmp, anchor);
-        if (anchorNode) {
-          const anchorEl = anchorNode.nodeType === Node.TEXT_NODE
-            ? anchorNode.parentElement : anchorNode;
-          const blockEl = anchorEl.closest('p, div, tr, li, blockquote') || anchorEl;
-          blockEl.parentNode.insertBefore(newP, blockEl);
-        } else {
-          tmp.appendChild(newP);
-        }
-
-        // Write back the clean HTML
-        const newHTML = tmp.innerHTML;
+        // HTML modes: manipulate the live DOM directly to avoid
+        // innerHTML round-trip which destroys formatting.
+        let root; // the live editable DOM element
+        let ownerDoc;
         if (body.type === 'ckeditor') {
-          body.editor.setData(newHTML);
+          // CKEditor: access the native editable element directly
+          const editable = body.editor.editable();
+          root = editable ? editable.$ : null;
+          ownerDoc = root ? root.ownerDocument : document;
         } else if (body.type === 'iframe') {
-          body.doc.body.innerHTML = newHTML;
+          root = body.doc.body;
+          ownerDoc = body.doc;
         } else {
-          body.el.innerHTML = newHTML;
+          root = body.el;
+          ownerDoc = document;
         }
-        inserted = true;
+
+        if (root) {
+          // Build new <p> matching existing body style
+          const bodyStyle = extractBodyStyle(html);
+          const newP = ownerDoc.createElement('p');
+          if (bodyStyle && bodyStyle.tag === 'font') {
+            const font = ownerDoc.createElement('font');
+            if (bodyStyle.face) font.setAttribute('face', bodyStyle.face);
+            if (bodyStyle.size) font.setAttribute('size', bodyStyle.size);
+            if (bodyStyle.color) font.setAttribute('color', bodyStyle.color);
+            font.textContent = commissionText;
+            newP.appendChild(font);
+          } else if (bodyStyle && bodyStyle.style) {
+            newP.setAttribute('style', bodyStyle.style);
+            newP.textContent = commissionText;
+          } else {
+            newP.textContent = commissionText;
+          }
+
+          // Find anchor node in the live DOM and insert before its block
+          const anchorNode = findAnchorNode(root, anchor);
+          if (anchorNode) {
+            const anchorEl = anchorNode.nodeType === Node.TEXT_NODE
+              ? anchorNode.parentElement : anchorNode;
+            const blockEl = anchorEl.closest('p, div, tr, li, blockquote') || anchorEl;
+            blockEl.parentNode.insertBefore(newP, blockEl);
+          } else {
+            root.appendChild(newP);
+          }
+
+          // Notify CKEditor that content changed (so it syncs internally)
+          if (body.type === 'ckeditor') {
+            body.editor.fire('change');
+          }
+          inserted = true;
+        }
       }
 
       if (inserted) {
