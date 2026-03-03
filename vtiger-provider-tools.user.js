@@ -134,61 +134,87 @@
      MODULE 2: EMAILMAKER COMPOSE TRIGGER
      ═══════════════════════════════════════════════════════════════════════════ */
 
-  function triggerEMAILMakerCompose() {
-    // Strategy 1: Direct link with onclick containing EMAILMaker
-    let link = document.querySelector('a[onclick*="EMAILMaker"]');
-    if (link) {
-      console.log('[HW24 Provider] EMAILMaker link found via onclick');
-      link.click();
-      return true;
-    }
+  /**
+   * Find the "Send Email with EMAILMaker" ACTION link (not the module navigation link).
+   * The action link opens Popup 1 (recipient + template selection).
+   * Module links (href="index.php?module=EMAILMaker&view=...") must be excluded.
+   */
+  function findSendEmailAction() {
+    // Helper: is this a module-navigation link (NOT what we want)?
+    const isModuleLink = (a) => {
+      const href = a.getAttribute('href') || '';
+      // Module links navigate to EMAILMaker module page — they contain view=List or view=Detail etc.
+      return /module=EMAILMaker.*view=/i.test(href) && !/SendEmail|Compose|action/i.test(href);
+    };
 
-    // Strategy 2: Link with href containing EMAILMaker
-    link = document.querySelector('a[href*="EMAILMaker"]');
-    if (link) {
-      console.log('[HW24 Provider] EMAILMaker link found via href');
-      link.click();
-      return true;
-    }
-
-    // Strategy 3: Search all links for EMAILMaker text
+    // Strategy 1: Link whose TEXT contains "Send Email" + "EMAILMaker" (the action link)
     const allLinks = [...document.querySelectorAll('a')];
-    link = allLinks.find(a => /emailmaker/i.test(a.textContent) || /emailmaker/i.test(a.getAttribute('onclick') || '') || /emailmaker/i.test(a.getAttribute('href') || ''));
+    let link = allLinks.find(a => /send\s*email.*emailmaker|emailmaker.*send\s*email/i.test(a.textContent) && !isModuleLink(a));
     if (link) {
-      console.log('[HW24 Provider] EMAILMaker link found via text search');
+      console.log('[HW24 Provider] Found "Send Email with EMAILMaker" via text match');
+      return link;
+    }
+
+    // Strategy 2: Link with onclick that triggers EMAILMaker send (not navigation)
+    link = allLinks.find(a => {
+      const onclick = a.getAttribute('onclick') || '';
+      return /EMAILMaker/i.test(onclick) && /send|compose|mass|action/i.test(onclick);
+    });
+    if (link) {
+      console.log('[HW24 Provider] Found EMAILMaker action via onclick');
+      return link;
+    }
+
+    // Strategy 3: Link with href pointing to EMAILMaker SendEmail/Compose action
+    link = allLinks.find(a => {
+      const href = a.getAttribute('href') || '';
+      return /EMAILMaker/i.test(href) && /SendEmail|Compose|action=Send/i.test(href);
+    });
+    if (link) {
+      console.log('[HW24 Provider] Found EMAILMaker action via href');
+      return link;
+    }
+
+    // Strategy 4: Any link containing "Send Email" text (generic VTiger email action)
+    link = allLinks.find(a => /^send\s*email/i.test(a.textContent.trim()));
+    if (link) {
+      console.log('[HW24 Provider] Found generic "Send Email" link');
+      return link;
+    }
+
+    return null;
+  }
+
+  function triggerEMAILMakerCompose() {
+    // Try finding the action link directly
+    let link = findSendEmailAction();
+    if (link) {
       link.click();
       return true;
     }
 
-    // Strategy 4: Open "More" dropdown and search there
-    const moreBtn = document.querySelector('.btn-group .dropdown-toggle, button[data-toggle="dropdown"], .moreActionsBtn, [id*="moreActions"]');
-    if (moreBtn) {
-      console.log('[HW24 Provider] Opening More dropdown to find EMAILMaker');
+    // Strategy 5: Open "More" dropdown and search there
+    const moreBtns = document.querySelectorAll('.btn-group .dropdown-toggle, button[data-toggle="dropdown"], .moreActionsBtn, [id*="moreActions"]');
+    for (const moreBtn of moreBtns) {
+      console.log('[HW24 Provider] Opening More dropdown to find EMAILMaker action');
       moreBtn.click();
-      // Wait a moment for dropdown to open
+
+      // Give dropdown a moment to open, then search
       setTimeout(() => {
-        const dropdownLinks = [...document.querySelectorAll('.dropdown-menu a, .open a, .show a')];
-        const emLink = dropdownLinks.find(a => /emailmaker/i.test(a.textContent) || /emailmaker/i.test(a.getAttribute('onclick') || '') || /emailmaker/i.test(a.getAttribute('href') || ''));
-        if (emLink) {
-          console.log('[HW24 Provider] EMAILMaker link found in More dropdown');
-          emLink.click();
+        const actionLink = findSendEmailAction();
+        if (actionLink) {
+          console.log('[HW24 Provider] EMAILMaker action found in dropdown');
+          actionLink.click();
         } else {
-          // Also try "Send Email" generic link which may use EMAILMaker
-          const sendEmail = dropdownLinks.find(a => /send.*email|e-mail.*senden/i.test(a.textContent));
-          if (sendEmail) {
-            console.log('[HW24 Provider] "Send Email" link found in More dropdown');
-            sendEmail.click();
-          } else {
-            console.warn('[HW24 Provider] EMAILMaker not found in More dropdown');
-            alert('EMAILMaker-Link nicht gefunden.\nBitte öffne den EMAILMaker manuell — die Felder werden dann automatisch befüllt.');
-          }
+          console.warn('[HW24 Provider] EMAILMaker action not found in dropdown');
+          alert('„Send Email with EMAILMaker"-Link nicht gefunden.\nBitte öffne den EMAILMaker manuell — die Felder werden dann automatisch befüllt.');
         }
       }, 300);
       return true;
     }
 
-    console.warn('[HW24 Provider] EMAILMaker link not found anywhere');
-    alert('EMAILMaker-Link nicht gefunden.\nBitte öffne den EMAILMaker manuell — die Felder werden dann automatisch befüllt.');
+    console.warn('[HW24 Provider] EMAILMaker action link not found anywhere');
+    alert('„Send Email with EMAILMaker"-Link nicht gefunden.\nBitte öffne den EMAILMaker manuell — die Felder werden dann automatisch befüllt.');
     return false;
   }
 
@@ -265,122 +291,72 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 4: TEMPLATE SELECTION
+     MODULE 4: STEP 1 POPUP — RECIPIENT + TEMPLATE SELECTION
+     ═══════════════════════════════════════════════════════════════════════════
+     EMAILMaker opens a Step-1 popup first where the user picks:
+       - To / CC / BCC recipients
+       - Email template
+       - Then clicks "Compose Email" to proceed to Step 2 (CKEditor)
+     We automate all of that here.
      ═══════════════════════════════════════════════════════════════════════════ */
 
-  async function selectTemplate(container) {
-    console.log('[HW24 Provider] Starting template selection...');
-
-    // Find "Select Email Template" button — text-based search
-    const allButtons = [...container.querySelectorAll('button, a.btn, input[type="button"], [role="button"]')];
-    let templateBtn = allButtons.find(b => /select.*template|template.*select|vorlage.*wählen|e-?mail.*template/i.test(b.textContent));
-
-    // Also try select/dropdown that might contain templates
-    if (!templateBtn) {
-      templateBtn = container.querySelector('[id*="template" i], [name*="template" i], [data-template], .emailTemplateBtn, #selectEmailTemplate');
-    }
-
-    if (!templateBtn) {
-      console.warn('[HW24 Provider] Template select button not found, trying broader search...');
-      // Try finding any element with "template" in text within the compose area
-      const spans = [...container.querySelectorAll('span, label, div')];
-      const templateSpan = spans.find(s => /template|vorlage/i.test(s.textContent) && s.textContent.length < 50);
-      if (templateSpan) {
-        const clickable = templateSpan.closest('button, a, [role="button"]') || templateSpan;
-        templateBtn = clickable;
+  /**
+   * Find the Step-1 popup container.
+   * This is the FIRST popup that appears after clicking "Send Email with EMAILMaker".
+   * It contains recipient fields and a template selector, but NO CKEditor yet.
+   */
+  function findStep1Container() {
+    const selectors = [
+      '.SendEmailFormStep1',
+      '#sendEmailFormStep1',
+      '.modelContainer',
+      '.modal.in',
+      '.modal.show',
+      '[role="dialog"]'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      // Step 1 has recipient fields but NO CKEditor
+      const hasRecipient = el.querySelector('input[name="to"], input[name="toemailids"], select[name="to"], [id*="to_email"], [class*="toField"], [data-fieldname="to"]');
+      const hasCKEditor = el.querySelector('.cke, [id^="cke_"], .cke_editable');
+      if (hasRecipient && !hasCKEditor) {
+        return el;
       }
     }
-
-    if (!templateBtn) {
-      console.warn('[HW24 Provider] Template button not found — skipping auto-selection');
-      return false;
-    }
-
-    console.log('[HW24 Provider] Clicking template button:', templateBtn.textContent.trim().substring(0, 40));
-    templateBtn.click();
-
-    // Wait for template list to appear
-    try {
-      await sleep(500);
-      const templateList = await waitFor(() => {
-        // Look for template list items
-        const items = document.querySelectorAll('.listViewEntries tr, .modal .listViewEntries tr, [class*="template"] li, .modal-body tr, .modal-body li');
-        if (items.length > 0) return items;
-        // Also try a popup/modal that just appeared
-        const modals = document.querySelectorAll('.modal.in, .modal.show, [role="dialog"]');
-        for (const m of modals) {
-          const rows = m.querySelectorAll('tr, li');
-          if (rows.length > 1) return rows;
-        }
-        return null;
-      }, 200, 5000);
-
-      // Find "Anfrage Händler" in the template list
-      let targetRow = null;
-      for (const item of templateList) {
-        if (/Anfrage\s*H[äa]ndler/i.test(item.textContent)) {
-          targetRow = item;
-          break;
-        }
+    // Broader fallback: any modal/dialog that has email fields but no CKEditor
+    const modals = document.querySelectorAll('.modal.in, .modal.show, .modelContainer, [role="dialog"]');
+    for (const m of modals) {
+      const hasEmail = m.querySelector('input[type="text"], select');
+      const hasCKEditor = m.querySelector('.cke, [id^="cke_"], .cke_editable');
+      const hasTemplate = m.querySelector('[id*="template" i], [name*="template" i], select');
+      if (hasEmail && hasTemplate && !hasCKEditor) {
+        return m;
       }
-
-      if (!targetRow) {
-        console.warn('[HW24 Provider] Template "Anfrage Händler" not found in list');
-        return false;
-      }
-
-      console.log('[HW24 Provider] Found "Anfrage Händler" template, clicking...');
-      // Click the row or a link within it
-      const link = targetRow.querySelector('a') || targetRow;
-      link.click();
-
-      // Wait for CKEditor content to load
-      await waitFor(() => {
-        const ck = getCKEditorInstance();
-        if (!ck) return false;
-        try {
-          const data = ck.getData();
-          return data && data.length > 50;
-        } catch { return false; }
-      }, 300, 8000);
-
-      console.log('[HW24 Provider] Template loaded successfully');
-      return true;
-
-    } catch (err) {
-      console.warn('[HW24 Provider] Template selection timeout:', err.message);
-      return false;
     }
+    return null;
   }
 
-  /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 5: EMAIL RECIPIENT SETTING
-     ═══════════════════════════════════════════════════════════════════════════ */
-
-  function setEmailRecipient(field, email) {
+  /**
+   * Set recipient in Step 1 popup fields.
+   */
+  function setStep1Recipient(container, field, email) {
     if (!email) return;
-    console.log('[HW24 Provider] Setting', field, 'to', email);
-
-    const container = findComposeContainer() || document.body;
+    console.log('[HW24 Provider] Step1: Setting', field, 'to', email);
 
     // If field is 'cc', first make the CC field visible
     if (field === 'cc') {
-      const addCcLink = container.querySelector('a[data-type="cc"], .addCc, [id*="addCc"], [onclick*="cc"]');
+      const addCcLink = container.querySelector('a[data-type="cc"], .addCc, [id*="addCc"], [onclick*="cc"], [id*="Cc"]');
       if (addCcLink) {
         addCcLink.click();
-        console.log('[HW24 Provider] Clicked "Add Cc" link');
+        console.log('[HW24 Provider] Step1: Clicked "Add Cc" link');
       }
-      // Also try to show hidden CC row
-      const ccRow = container.querySelector('[class*="cc"][style*="display: none"], [class*="cc"][style*="display:none"], .ccContainer[style*="none"]');
-      if (ccRow) {
-        ccRow.style.display = '';
-      }
+      const ccRow = container.querySelector('[class*="cc"][style*="display: none"], [class*="cc"][style*="display:none"]');
+      if (ccRow) ccRow.style.display = '';
     }
 
-    // Small delay to let CC field appear
-    setTimeout(() => {
-      _setRecipientField(container, field, email);
-    }, field === 'cc' ? 300 : 50);
+    // Small delay for CC field to appear
+    setTimeout(() => _setRecipientField(container, field, email), field === 'cc' ? 300 : 50);
   }
 
   function _setRecipientField(container, field, email) {
@@ -391,28 +367,44 @@
         const selectors = [
           `select[name="${field}"]`,
           `select[name="${field}[]"]`,
+          `select[name="${field}emailids"]`,
           `select[id*="${field}"]`,
           `[data-fieldname="${field}"] select`
         ];
         for (const sel of selectors) {
-          const $select = jq(sel);
+          const $select = jq(container).find(sel);
           if ($select.length && $select.data('select2')) {
             const opt = new Option(email, email, true, true);
             $select.append(opt).trigger('change');
             $select.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
-            console.log('[HW24 Provider] Set', field, 'via Select2 jQuery API');
+            console.log('[HW24 Provider] Set', field, 'via Select2 jQuery API:', sel);
             return;
           }
         }
+        // Also try broader Select2 selectors within container
+        const $allSelects = jq(container).find('select');
+        $allSelects.each(function () {
+          const $s = jq(this);
+          const name = ($s.attr('name') || '').toLowerCase();
+          const id = ($s.attr('id') || '').toLowerCase();
+          if ((name.includes(field) || id.includes(field)) && $s.data('select2')) {
+            const opt = new Option(email, email, true, true);
+            $s.append(opt).trigger('change');
+            $s.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
+            console.log('[HW24 Provider] Set', field, 'via Select2 broad match:', $s.attr('name') || $s.attr('id'));
+            return false; // break jQuery each
+          }
+        });
       }
     } catch (e) {
-      console.log('[HW24 Provider] Select2 jQuery strategy failed:', e.message);
+      console.log('[HW24 Provider] Select2 strategy failed:', e.message);
     }
 
     // Strategy 2: Native input field
     const inputSelectors = [
       `input[name="${field}"]`,
       `input[name="${field}[]"]`,
+      `input[name="${field}emailids"]`,
       `input[id*="${field}"]`,
       `[data-fieldname="${field}"] input`,
       `.${field}Field input`,
@@ -424,7 +416,6 @@
         input.value = email;
         input.focus();
         fire(input);
-        // Simulate Enter key to confirm the email
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', keyCode: 13, bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
@@ -436,7 +427,6 @@
     // Strategy 3: Select2 search input
     const searchInputs = container.querySelectorAll('.select2-search__field, .select2-search input, input.select2-input');
     for (const si of searchInputs) {
-      // Check if this search input belongs to the right field
       const parentField = si.closest(`[data-fieldname="${field}"], .${field}Field, [class*="${field}"]`);
       if (parentField || searchInputs.length === 1 || (field === 'to' && si === searchInputs[0]) || (field === 'cc' && si === searchInputs[1])) {
         si.value = email;
@@ -451,7 +441,129 @@
       }
     }
 
-    console.warn('[HW24 Provider] Could not find', field, 'input field');
+    console.warn('[HW24 Provider] Could not find', field, 'input field in container');
+  }
+
+  /**
+   * Select the "Anfrage Händler" template in Step 1.
+   * Looks for a <select>, dropdown, or clickable template list.
+   */
+  async function selectTemplateInStep1(container) {
+    console.log('[HW24 Provider] Step1: Selecting template "Anfrage Händler"...');
+
+    // Strategy 1: <select> element for templates
+    const selects = container.querySelectorAll('select');
+    for (const sel of selects) {
+      const name = (sel.name || sel.id || '').toLowerCase();
+      // Skip recipient selects
+      if (/^(to|cc|bcc)/.test(name)) continue;
+      // Check if any option contains "Anfrage Händler"
+      const options = [...sel.options];
+      const target = options.find(o => /Anfrage\s*H[äa]ndler/i.test(o.text));
+      if (target) {
+        sel.value = target.value;
+        fire(sel);
+        console.log('[HW24 Provider] Step1: Template selected via <select>:', target.text);
+        return true;
+      }
+      // Even if no match, if this looks like a template select, log its options
+      if (/template|vorlage/i.test(name) || options.some(o => /template|vorlage/i.test(o.text))) {
+        console.log('[HW24 Provider] Step1: Template <select> found but "Anfrage Händler" not in options:', options.map(o => o.text).join(', '));
+      }
+    }
+
+    // Strategy 2: Select2-wrapped template dropdown (jQuery)
+    try {
+      const jq = window.jQuery || window.$;
+      if (jq) {
+        const $selects = jq(container).find('select');
+        let found = false;
+        $selects.each(function () {
+          const $s = jq(this);
+          const name = ($s.attr('name') || $s.attr('id') || '').toLowerCase();
+          if (/^(to|cc|bcc)/.test(name)) return; // skip recipient
+          if ($s.data('select2')) {
+            const options = this.options ? [...this.options] : [];
+            const target = options.find(o => /Anfrage\s*H[äa]ndler/i.test(o.text));
+            if (target) {
+              $s.val(target.value).trigger('change');
+              console.log('[HW24 Provider] Step1: Template selected via Select2:', target.text);
+              found = true;
+              return false;
+            }
+          }
+        });
+        if (found) return true;
+      }
+    } catch (e) {
+      console.log('[HW24 Provider] Step1: Select2 template strategy failed:', e.message);
+    }
+
+    // Strategy 3: "Select Email Template" button → opens sub-popup with template list
+    const allButtons = [...container.querySelectorAll('button, a.btn, input[type="button"], [role="button"]')];
+    const templateBtn = allButtons.find(b => /select.*template|template.*select|vorlage|e-?mail.*template/i.test(b.textContent));
+    if (templateBtn) {
+      console.log('[HW24 Provider] Step1: Clicking template button:', templateBtn.textContent.trim().substring(0, 40));
+      templateBtn.click();
+
+      try {
+        await sleep(500);
+        const templateList = await waitFor(() => {
+          const items = document.querySelectorAll('.listViewEntries tr, .modal .listViewEntries tr, [class*="template"] li, .modal-body tr, .modal-body li');
+          return items.length > 0 ? items : null;
+        }, 200, 5000);
+
+        let targetRow = null;
+        for (const item of templateList) {
+          if (/Anfrage\s*H[äa]ndler/i.test(item.textContent)) {
+            targetRow = item;
+            break;
+          }
+        }
+        if (targetRow) {
+          const link = targetRow.querySelector('a') || targetRow;
+          link.click();
+          console.log('[HW24 Provider] Step1: Template "Anfrage Händler" selected from list');
+          await sleep(300);
+          return true;
+        }
+        console.warn('[HW24 Provider] Step1: "Anfrage Händler" not found in template list');
+      } catch (err) {
+        console.warn('[HW24 Provider] Step1: Template list timeout:', err.message);
+      }
+    }
+
+    console.warn('[HW24 Provider] Step1: Template auto-selection failed');
+    return false;
+  }
+
+  /**
+   * Click the "Compose Email" / "Next" / "Send" button in Step 1 to proceed to Step 2.
+   */
+  function clickStep1ComposeButton(container) {
+    // Look for a submit/compose button
+    const allButtons = [...container.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn')];
+    const composeBtn = allButtons.find(b => {
+      const text = b.textContent.toLowerCase().trim();
+      const val = (b.value || '').toLowerCase().trim();
+      return /compose|verfassen|next|weiter|^send$|^senden$/i.test(text) || /compose|next|send/i.test(val);
+    });
+    if (composeBtn) {
+      console.log('[HW24 Provider] Step1: Clicking compose button:', composeBtn.textContent.trim() || composeBtn.value);
+      composeBtn.click();
+      return true;
+    }
+
+    // Fallback: find submit button by type
+    const submitBtn = container.querySelector('button[type="submit"], input[type="submit"]');
+    if (submitBtn) {
+      console.log('[HW24 Provider] Step1: Clicking submit button');
+      submitBtn.click();
+      return true;
+    }
+
+    console.warn('[HW24 Provider] Step1: Compose/submit button not found');
+    return false;
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -657,13 +769,14 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 7: COMPOSE CONTAINER DETECTION
+     MODULE 7: COMPOSE CONTAINER DETECTION (Step 2 — CKEditor popup)
      ═══════════════════════════════════════════════════════════════════════════ */
 
   function findComposeContainer() {
     const selectors = [
       '#composeEmailContainer',
       '.SendEmailFormStep2',
+      '#sendEmailFormStep2',
       '.modelContainer',
       '.modal.in',
       '.modal.show',
@@ -672,7 +785,8 @@
     for (const sel of selectors) {
       const el = document.querySelector(sel);
       if (!el) continue;
-      if (el.querySelector('input[name="subject"], .cke, [id^="cke_"], textarea.ckEditorSource, .cke_editable')) {
+      // Step 2 MUST have CKEditor or a subject field (distinguishes from Step 1)
+      if (el.querySelector('.cke, [id^="cke_"], .cke_editable, textarea.ckEditorSource')) {
         return el;
       }
     }
@@ -742,48 +856,81 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 9: MUTATION OBSERVER ORCHESTRATION
+     MODULE 9: MUTATION OBSERVER — TWO-POPUP ORCHESTRATION
+     ═══════════════════════════════════════════════════════════════════════════
+     Flow:
+       1. User clicks provider button → triggerEMAILMakerCompose()
+       2. POPUP 1 (Step 1): recipient + template selection
+          → We auto-fill To/CC, select template, click "Compose Email"
+       3. POPUP 2 (Step 2): CKEditor compose email
+          → We fill greeting, description, closing formula
      ═══════════════════════════════════════════════════════════════════════════ */
 
-  async function handleComposeDetected(container) {
+  let step1Handled = false;
+
+  /**
+   * STEP 1: Handle the first popup (recipient + template selection)
+   */
+  async function handleStep1Detected(container) {
+    if (!pendingProvider || step1Handled) return;
+    step1Handled = true;
+
+    const provider = pendingProvider;
+    console.log('[HW24 Provider] Step 1 popup detected for:', provider.label);
+
+    try {
+      await sleep(300); // Let the popup fully render
+
+      // Set To recipient
+      setStep1Recipient(container, 'to', provider.to);
+      await sleep(400);
+
+      // Set CC recipient
+      if (provider.cc) {
+        setStep1Recipient(container, 'cc', provider.cc);
+        await sleep(400);
+      }
+
+      // Select template "Anfrage Händler"
+      await selectTemplateInStep1(container);
+      await sleep(300);
+
+      // Click "Compose Email" button to proceed to Step 2
+      clickStep1ComposeButton(container);
+      console.log('[HW24 Provider] Step 1 complete — waiting for Step 2 (compose popup)...');
+
+    } catch (err) {
+      console.error('[HW24 Provider] Step 1 error:', err);
+      markDetailButton(provider.key, 'error');
+    }
+  }
+
+  /**
+   * STEP 2: Handle the second popup (CKEditor compose email)
+   */
+  async function handleStep2Detected(container) {
     if (!pendingProvider) return;
 
     const provider = pendingProvider;
-    console.log('[HW24 Provider] Compose dialog detected for provider:', provider.label);
+    console.log('[HW24 Provider] Step 2 compose popup detected for:', provider.label);
 
     // Inject provider info toolbar
     injectProviderEmailToolbar(container, provider);
 
     try {
-      // Step 1: Select template
+      // Wait for CKEditor content to load (template should be loading)
       updateProviderEmailToolbarStatus('\u23F3 Template wird geladen...');
-      const templateSelected = await selectTemplate(container);
-      if (templateSelected) {
-        console.log('[HW24 Provider] Template selected, waiting for content...');
-        await sleep(500);
-      } else {
-        console.log('[HW24 Provider] Template not auto-selected, waiting for manual selection or existing content...');
-        // Wait for user to select template or for content to appear
-        try {
-          await waitFor(() => {
-            const ck = getCKEditorInstance();
-            if (!ck) return false;
-            try { return ck.getData().length > 50; } catch { return false; }
-          }, 500, 30000);
-        } catch {
-          console.warn('[HW24 Provider] Timeout waiting for email content');
-        }
+      try {
+        await waitFor(() => {
+          const ck = getCKEditorInstance();
+          if (!ck) return false;
+          try { return ck.getData().length > 50; } catch { return false; }
+        }, 300, 15000);
+      } catch {
+        console.warn('[HW24 Provider] Timeout waiting for CKEditor content — proceeding anyway');
       }
 
-      // Step 2: Set To/CC
-      updateProviderEmailToolbarStatus('\u23F3 Empfänger werden gesetzt...');
-      setEmailRecipient('to', provider.to);
-      if (provider.cc) {
-        setTimeout(() => setEmailRecipient('cc', provider.cc), 500);
-      }
-
-      // Step 3: Fill email body
-      await sleep(provider.cc ? 1000 : 300);
+      // Fill email body (greeting, description, closing)
       updateProviderEmailToolbarStatus('\u23F3 E-Mail wird befüllt...');
       await fillEmail(provider);
 
@@ -793,32 +940,45 @@
       console.log('[HW24 Provider] Email preparation complete for', provider.label);
 
     } catch (err) {
-      console.error('[HW24 Provider] Error during email preparation:', err);
+      console.error('[HW24 Provider] Step 2 error:', err);
       updateProviderEmailToolbarStatus('\u274C Fehler: ' + err.message);
       markDetailButton(provider.key, 'error');
     }
 
     // Clear pending provider
     pendingProvider = null;
+    step1Handled = false;
   }
 
   function initComposeObserver() {
-    function tryDetect() {
+    function tryDetectStep1() {
+      if (!pendingProvider || step1Handled) return;
+      const container = findStep1Container();
+      if (!container) return;
+      handleStep1Detected(container);
+    }
+
+    function tryDetectStep2() {
       if (!pendingProvider) return;
       if (document.getElementById(COMPOSE_TOOLBAR_ID)) return; // Already handled
-
       const container = findComposeContainer();
       if (!container) return;
+      handleStep2Detected(container);
+    }
 
-      handleComposeDetected(container);
+    function tryDetectAny() {
+      // Try Step 2 first (if Step 1 was already handled or skipped)
+      tryDetectStep2();
+      // Then try Step 1
+      tryDetectStep1();
     }
 
     const scheduleRetries = () => {
-      setTimeout(tryDetect, 300);
-      setTimeout(tryDetect, 800);
-      setTimeout(tryDetect, 1500);
-      setTimeout(tryDetect, 3000);
-      setTimeout(tryDetect, 5000);
+      setTimeout(tryDetectAny, 300);
+      setTimeout(tryDetectAny, 800);
+      setTimeout(tryDetectAny, 1500);
+      setTimeout(tryDetectAny, 3000);
+      setTimeout(tryDetectAny, 5000);
     };
 
     const observer = new MutationObserver(mutations => {
@@ -828,24 +988,28 @@
         for (const node of mutation.addedNodes) {
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
 
-          const isCompose = node.id === 'composeEmailContainer'
+          const isDialog = node.classList?.contains('SendEmailFormStep1')
             || node.classList?.contains('SendEmailFormStep2')
+            || node.id === 'composeEmailContainer'
+            || node.id === 'sendEmailFormStep1'
+            || node.id === 'sendEmailFormStep2'
             || node.classList?.contains('modelContainer')
             || node.matches?.('.modal, [role="dialog"]');
 
-          const hasCompose = !isCompose && (
-            node.querySelector?.('#composeEmailContainer, .SendEmailFormStep2, .cke, [id^="cke_"]')
+          const hasDialog = !isDialog && (
+            node.querySelector?.('.SendEmailFormStep1, .SendEmailFormStep2, #composeEmailContainer, .cke, [id^="cke_"]')
           );
 
-          if (isCompose || hasCompose) {
+          if (isDialog || hasDialog) {
             scheduleRetries();
           }
         }
 
         if (mutation.type === 'attributes' && mutation.target.nodeType === Node.ELEMENT_NODE) {
           const t = mutation.target;
-          if (t.id === 'composeEmailContainer' || t.classList?.contains('SendEmailFormStep2')
-            || t.classList?.contains('modal') || t.classList?.contains('modelContainer')) {
+          if (t.classList?.contains('SendEmailFormStep1') || t.classList?.contains('SendEmailFormStep2')
+            || t.id === 'composeEmailContainer' || t.classList?.contains('modal')
+            || t.classList?.contains('modelContainer')) {
             scheduleRetries();
           }
         }
@@ -857,12 +1021,11 @@
     // Fallback polling every 2s, stop after 10min
     const poll = setInterval(() => {
       if (!pendingProvider) return;
-      if (document.getElementById(COMPOSE_TOOLBAR_ID)) return;
-      tryDetect();
+      tryDetectAny();
     }, 2000);
     setTimeout(() => clearInterval(poll), 600000);
 
-    console.log('[HW24 Provider] Compose observer initialized');
+    console.log('[HW24 Provider] Two-popup observer initialized');
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -904,31 +1067,68 @@
     const descText = readDescriptionText();
     console.log('[HW24 Provider] Description pre-read, length:', descText.length);
 
-    // Set pending provider
+    // Set pending provider + reset step tracking
     pendingProvider = { ...provider };
+    step1Handled = false;
 
     // Mark button as loading
     markDetailButton(provider.key, 'loading');
 
-    // Trigger EMAILMaker
+    // Trigger EMAILMaker — this opens Popup 1 (Step 1)
     triggerEMAILMakerCompose();
   }
 
   function injectDetailToolbar() {
     if (document.getElementById(DETAIL_TOOLBAR_ID)) return;
 
-    // Find placement target
-    const target = document.querySelector('.detailViewTitle, .recordBasicInfo, .detailViewInfo, .details .contents');
+    // Find placement target — near "+ Add Tag" area, which is below the record header
+    // and above the tab bar (Summary, Details, Updates...)
+    let target = null;
+    let insertMode = 'after'; // 'after' or 'before'
+
+    // Strategy 1: Find the "+ Add Tag" button/link and place toolbar next to it
+    const addTag = document.querySelector('.addTag, [class*="addTag"], a[href*="addTag"], [id*="addTag"]');
+    if (addTag) {
+      target = addTag.closest('div, span, td') || addTag.parentElement;
+      insertMode = 'after';
+      console.log('[HW24 Provider] Placing toolbar near + Add Tag');
+    }
+
+    // Strategy 2: Place before the tab bar (Summary / Details / Updates...)
+    if (!target) {
+      const tabBar = document.querySelector('.detailViewInfo .related-tabs, .tabContainer, ul.nav-tabs, .detailview-tab, [class*="relatedTabs"]');
+      if (tabBar) {
+        target = tabBar;
+        insertMode = 'before';
+        console.log('[HW24 Provider] Placing toolbar before tab bar');
+      }
+    }
+
+    // Strategy 3: Place after the record header block (below all header info)
+    if (!target) {
+      // The header block contains title, status badges, partner info etc.
+      const headerBlock = document.querySelector('.detailViewInfo .recordDetails, .detailViewInfo > .row:first-child, .recordBasicInfo');
+      if (headerBlock) {
+        target = headerBlock;
+        insertMode = 'after';
+        console.log('[HW24 Provider] Placing toolbar after record header block');
+      }
+    }
+
+    // Strategy 4: Fallback — after detailViewTitle
+    if (!target) {
+      target = document.querySelector('.detailViewTitle, .detailViewInfo');
+      insertMode = 'after';
+    }
+
     if (!target) {
       console.warn('[HW24 Provider] Detail view target element not found');
       return;
     }
 
-    console.log('[HW24 Provider] Injecting provider toolbar after', target.className || target.tagName);
-
     const toolbar = document.createElement('div');
     toolbar.id = DETAIL_TOOLBAR_ID;
-    toolbar.style.cssText = 'padding:10px 15px;background:linear-gradient(135deg,#ede9fe 0%,#ddd6fe 100%);border:1px solid #c4b5fd;border-radius:6px;margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;font-family:system-ui,-apple-system,sans-serif;';
+    toolbar.style.cssText = 'padding:8px 15px;background:linear-gradient(135deg,#ede9fe 0%,#ddd6fe 100%);border:1px solid #c4b5fd;border-radius:6px;margin:8px 15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;font-family:system-ui,-apple-system,sans-serif;';
 
     // Label
     const label = document.createElement('span');
@@ -972,11 +1172,15 @@
       }
     }
 
-    // Insert after the target element
-    if (target.nextSibling) {
-      target.parentNode.insertBefore(toolbar, target.nextSibling);
+    // Insert toolbar
+    if (insertMode === 'before') {
+      target.parentNode.insertBefore(toolbar, target);
     } else {
-      target.parentNode.appendChild(toolbar);
+      if (target.nextSibling) {
+        target.parentNode.insertBefore(toolbar, target.nextSibling);
+      } else {
+        target.parentNode.appendChild(toolbar);
+      }
     }
 
     console.log('[HW24 Provider] Provider toolbar injected with', PROVIDERS.length, 'buttons');
