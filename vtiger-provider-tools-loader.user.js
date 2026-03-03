@@ -1,0 +1,41 @@
+// ==UserScript==
+// @name         VTiger Provider Tools (Loader)
+// @namespace    hw24.vtiger.provider.tools.loader
+// @version      1.0.1
+// @description  Loader for VTiger Provider Tools - loads latest version from GitHub
+// @match        https://vtiger.hardwarewartung.com/index.php*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
+(async function () {
+  'use strict';
+
+  const SCRIPT_URL = 'https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js';
+
+  try {
+    const response = await fetch(SCRIPT_URL + '?t=' + Date.now());
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const code = await response.text();
+
+    // Execute via Blob URL (umgeht MIME-Type Problem)
+    const blob = new Blob([code], { type: 'application/javascript' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const script = document.createElement('script');
+    script.src = blobUrl;
+    script.onload = () => {
+      URL.revokeObjectURL(blobUrl);
+      console.log('[HW24 Loader] vtiger-provider-tools.user.js loaded successfully');
+    };
+    script.onerror = () => {
+      URL.revokeObjectURL(blobUrl);
+      console.error('[HW24 Loader] Failed to execute script');
+    };
+    document.head.appendChild(script);
+
+  } catch (err) {
+    console.error('[HW24 Loader] Failed to load vtiger-provider-tools.user.js:', err.message);
+  }
+})();
