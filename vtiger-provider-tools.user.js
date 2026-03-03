@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.1.0
+// @version      1.2.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider-Anfragen: Vorbereitungs-Buttons für Provider-E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.1.0';
+  const HW24_VERSION = '1.2.0';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -453,21 +453,98 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 6: STEP 2 — RECIPIENT SETTING (To, CC)
+     MODULE 6: STEP 2 — RECIPIENT SETTING (From, To, CC)
      ═══════════════════════════════════════════════════════════════════════════
-     From is already set to office@hardwarewartung.com by default — don't touch.
-     1. Clear existing To (customer email — would go to wrong person!)
-     2. Set To to provider email
-     3. Set CC to provider CC (if any)
-
-     IMPORTANT: select[id*="to"] can accidentally match "from" selects too
-     (e.g. id="fromto..." or similar). We use exact name-based selectors only.
+     1. Set From to office@hardwarewartung.com
+     2. Clear existing To (customer email — would go to wrong person!)
+     3. Set To to provider email
+     4. Set CC to provider CC (if any)
      ═══════════════════════════════════════════════════════════════════════════ */
+
+  function _debugLogAllSelects(container) {
+    const allSelects = container.querySelectorAll('select');
+    console.log('[HW24 Provider] Debug: All selects in compose (' + allSelects.length + '):');
+    for (const s of allSelects) {
+      const opts = [...s.options].map(o => o.text.substring(0, 40));
+      console.log('  name="' + s.name + '" id="' + s.id + '" multiple=' + s.multiple + ' opts(' + s.options.length + '):', opts.join(' | '));
+    }
+  }
+
+  function setFromEmail(container) {
+    console.log('[HW24 Provider] Step2: Setting From to office@hardwarewartung.com');
+    const jq = window.jQuery || window.$;
+    const TARGET = 'office@hardwarewartung.com';
+
+    const allSelects = container.querySelectorAll('select');
+    _debugLogAllSelects(container);
+
+    // Strategy 1: Select with name containing "from" (not starting with to/cc/bcc)
+    for (const sel of allSelects) {
+      const name = (sel.name || '').toLowerCase();
+      const id = (sel.id || '').toLowerCase();
+      if (name.startsWith('to') || name.startsWith('cc') || name.startsWith('bcc')) continue;
+      if (!(name.includes('from') || id.includes('from'))) continue;
+      const options = [...sel.options];
+      const officeOpt = options.find(o => o.text.includes(TARGET) || o.value.includes(TARGET));
+      if (officeOpt) {
+        sel.value = officeOpt.value;
+        fire(sel);
+        if (jq) { try { jq(sel).val(officeOpt.value).trigger('change'); } catch (e) { /* ok */ } }
+        console.log('[HW24 Provider] Step2: From set to', TARGET, 'via select name=' + sel.name);
+        return true;
+      }
+      console.log('[HW24 Provider] Step2: From select found (name=' + sel.name + ') but no office@ option. Options:',
+        options.map(o => o.text.substring(0, 50)).join(' | '));
+    }
+
+    // Strategy 2: Any single-select (not multiple) where an option contains "office@"
+    for (const sel of allSelects) {
+      if (sel.multiple) continue; // From is always single-select
+      const name = (sel.name || '').toLowerCase();
+      if (name.startsWith('to') || name.startsWith('cc') || name.startsWith('bcc')) continue;
+      const options = [...sel.options];
+      const officeOpt = options.find(o => o.text.includes(TARGET) || o.value.includes(TARGET));
+      if (officeOpt) {
+        sel.value = officeOpt.value;
+        fire(sel);
+        if (jq) { try { jq(sel).val(officeOpt.value).trigger('change'); } catch (e) { /* ok */ } }
+        console.log('[HW24 Provider] Step2: From set via option scan on select name=' + sel.name);
+        return true;
+      }
+    }
+
+    // Strategy 3: Look for a label "From" and find the associated select
+    const labels = container.querySelectorAll('label, .fieldLabel, td, .control-label');
+    for (const label of labels) {
+      const text = label.textContent.trim().toLowerCase();
+      if (text === 'from' || text === 'from:' || text === 'von' || text === 'von:' || text === 'absender') {
+        const row = label.closest('.row, tr, .form-group, .control-group') || label.parentElement;
+        const sel = row?.querySelector('select');
+        if (sel) {
+          const options = [...sel.options];
+          const officeOpt = options.find(o => o.text.includes(TARGET) || o.value.includes(TARGET));
+          if (officeOpt) {
+            sel.value = officeOpt.value;
+            fire(sel);
+            if (jq) { try { jq(sel).val(officeOpt.value).trigger('change'); } catch (e) { /* ok */ } }
+            console.log('[HW24 Provider] Step2: From set via label "' + text + '"');
+            return true;
+          }
+        }
+      }
+    }
+
+    console.warn('[HW24 Provider] Step2: Could not set From email — no select with office@ option found');
+    return false;
+  }
 
   function setComposeRecipients(container, provider) {
     console.log('[HW24 Provider] Step2: Setting recipients...');
 
     const jq = window.jQuery || window.$;
+
+    // --- FROM: Set to office@hardwarewartung.com ---
+    setFromEmail(container);
 
     // --- TO: Clear existing customer email, then set provider.to ---
     _clearAndSetToField(container, jq, provider.to);
@@ -475,12 +552,12 @@
     // --- CC: Set if provider has CC ---
     if (provider.cc) {
       setTimeout(() => {
-        // Make CC visible first — find "Add Cc" link
-        const addCcLinks = container.querySelectorAll('a');
-        for (const a of addCcLinks) {
-          if (/add\s*cc/i.test(a.textContent)) {
-            a.click();
-            console.log('[HW24 Provider] Step2: Clicked "Add Cc" link');
+        // Make CC visible first — find "Add Cc" link/button
+        const allClickables = [...container.querySelectorAll('a, button, span')];
+        for (const el of allClickables) {
+          if (/add\s*cc|cc\s*hinzu/i.test(el.textContent.trim())) {
+            el.click();
+            console.log('[HW24 Provider] Step2: Clicked "Add Cc"');
             break;
           }
         }
@@ -492,92 +569,204 @@
   }
 
   function _findSelectForField(container, jq, field) {
-    if (!jq) return null;
-    // Use EXACT name matching to avoid cross-matching (e.g. "to" matching "from")
-    const exactSelectors = [
-      `select[name="${field}"]`,
-      `select[name="${field}[]"]`,
-      `select[name="${field}emailids"]`,
-      `select[name="${field}emailids[]"]`
+    // Try many name variants
+    const nameVariants = [
+      field, field + '[]',
+      field + 'emailids', field + 'emailids[]',
+      field + '_email', field + '_email[]',
+      field + 'email', field + 'email[]',
+      'selected_' + field, 'selected' + field
     ];
-    for (const sel of exactSelectors) {
-      const $select = jq(container).find(sel);
-      if ($select.length) return $select;
+
+    // jQuery approach
+    if (jq) {
+      for (const name of nameVariants) {
+        const $select = jq(container).find('select[name="' + name + '"]');
+        if ($select.length) {
+          console.log('[HW24 Provider] Found select for "' + field + '" via name="' + name + '"');
+          return $select;
+        }
+      }
     }
+
+    // Native fallback
+    for (const name of nameVariants) {
+      const sel = container.querySelector('select[name="' + name + '"]');
+      if (sel) {
+        console.log('[HW24 Provider] Found native select for "' + field + '" via name="' + name + '"');
+        return jq ? jq(sel) : null;
+      }
+    }
+
+    // Label-based: find a label with the field name, then find the select in the same row
+    const labels = container.querySelectorAll('label, .fieldLabel, td, .control-label, span.fieldLabel');
+    for (const label of labels) {
+      const text = label.textContent.trim().toLowerCase().replace(':', '');
+      if (text === field || text === field + ':') {
+        const row = label.closest('.row, tr, .form-group, .control-group') || label.parentElement;
+        const sel = row?.querySelector('select');
+        if (sel && jq) {
+          console.log('[HW24 Provider] Found select for "' + field + '" via label');
+          return jq(sel);
+        }
+      }
+    }
+
     return null;
   }
 
   function _clearAndSetToField(container, jq, email) {
     console.log('[HW24 Provider] Step2: Clearing To and setting to', email);
 
-    // Strategy 1: Click all "x" remove buttons on existing Select2 tags
-    const removeButtons = container.querySelectorAll('.select2-selection__choice__remove');
-    let removedAny = false;
-    for (const btn of removeButtons) {
-      // Only remove from the To row — check parent context
-      const row = btn.closest('.row, tr, .form-group, [class*="to"]');
-      // In the compose form, To is the first recipient row
-      // Also check if this is NOT in a CC/BCC row
-      const label = row?.querySelector('label, .fieldLabel, td:first-child');
-      const labelText = label?.textContent?.toLowerCase() || '';
-      if (labelText.includes('cc') || labelText.includes('bcc')) continue;
-      btn.click();
-      removedAny = true;
-      console.log('[HW24 Provider] Step2: Clicked x to remove existing To recipient');
+    // Strategy 1: Find To select via heuristics
+    let $toSelect = _findSelectForField(container, jq, 'to');
+
+    // Strategy 1b: If not found, try the first multiple select that's not from/cc/bcc
+    if (!$toSelect && jq) {
+      const allSelects = container.querySelectorAll('select[multiple]');
+      for (const sel of allSelects) {
+        const name = (sel.name || sel.id || '').toLowerCase();
+        if (name.includes('from') || name.includes('bcc')) continue;
+        // Skip if it's clearly a CC field
+        if (name.includes('cc') && !name.includes('bcc')) continue;
+        $toSelect = jq(sel);
+        console.log('[HW24 Provider] Using first multiple select as To: name=' + sel.name + ' id=' + sel.id);
+        break;
+      }
     }
 
-    // Strategy 2: Clear via Select2 jQuery API
-    const $toSelect = _findSelectForField(container, jq, 'to');
-    if ($toSelect) {
-      if (!removedAny) {
+    if ($toSelect && $toSelect.length) {
+      // Clear all existing selections
+      try {
         $toSelect.val(null).trigger('change');
+        // Remove all option elements
         $toSelect.find('option').remove();
+        console.log('[HW24 Provider] Step2: Cleared To select via jQuery');
+      } catch (e) {
+        console.log('[HW24 Provider] Step2: jQuery clear failed:', e.message);
       }
-      // Add provider email
+
+      // Also click all "x" remove buttons on Select2 tags in the To row
+      _clickRemoveButtonsForSelect($toSelect[0], container);
+
+      // Add provider email as new option
       const opt = new Option(email, email, true, true);
       $toSelect.append(opt).trigger('change');
-      $toSelect.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
-      console.log('[HW24 Provider] Step2: To set via Select2');
+      try {
+        $toSelect.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
+      } catch (e) { /* ok */ }
+      console.log('[HW24 Provider] Step2: To set to', email, 'via Select2');
       return;
     }
 
+    // Strategy 2: Click all "x" remove buttons on Select2 tags (brute force)
+    console.log('[HW24 Provider] Step2: No To select found, trying Select2 tag removal');
+    const removeButtons = container.querySelectorAll('.select2-selection__choice__remove, .select2-selection__choice__display + .select2-selection__choice__remove');
+    let removedCount = 0;
+    for (const btn of removeButtons) {
+      // Only remove from the first recipient row (To is first)
+      const select2Container = btn.closest('.select2-container');
+      if (select2Container) {
+        // Check if this is the first select2 (To) or a later one (CC/BCC)
+        const allSelect2 = [...container.querySelectorAll('.select2-container')];
+        const idx = allSelect2.indexOf(select2Container);
+        // The first select2 after From might be To (From is usually index 0)
+        if (idx <= 1) {
+          btn.click();
+          removedCount++;
+        }
+      }
+    }
+    if (removedCount > 0) {
+      console.log('[HW24 Provider] Step2: Removed', removedCount, 'Select2 tags');
+    }
+
+    // Strategy 3: Try typing into Select2 search input
+    _typeIntoSelect2Search(container, email, 'to');
+
     // Fallback: native input
     _setNativeInput(container, 'to', email);
+  }
+
+  function _clickRemoveButtonsForSelect(selectEl, container) {
+    // Find the Select2 container that belongs to this select element
+    const select2Id = selectEl.id ? 'select2-' + selectEl.id : null;
+    if (!select2Id) return;
+    const s2container = container.querySelector('#' + CSS.escape(select2Id) + '-container')
+      || container.querySelector('[id*="' + selectEl.id + '"].select2-container')
+      || selectEl.nextElementSibling;
+    if (s2container) {
+      const removeButtons = s2container.querySelectorAll('.select2-selection__choice__remove');
+      for (const btn of removeButtons) {
+        btn.click();
+        console.log('[HW24 Provider] Step2: Clicked x on Select2 tag');
+      }
+    }
+  }
+
+  function _typeIntoSelect2Search(container, email, field) {
+    // Find Select2 search input in the To row
+    const labels = container.querySelectorAll('label, .fieldLabel, td, .control-label');
+    for (const label of labels) {
+      const text = label.textContent.trim().toLowerCase().replace(':', '');
+      if (text !== field && text !== field + ':') continue;
+      const row = label.closest('.row, tr, .form-group, .control-group') || label.parentElement;
+      if (!row) continue;
+      const searchInput = row.querySelector('.select2-search__field, .select2-search input, input.select2-input');
+      if (searchInput) {
+        searchInput.value = email;
+        searchInput.focus();
+        fire(searchInput);
+        // Simulate Enter key
+        searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+        setTimeout(() => {
+          searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
+        }, 50);
+        console.log('[HW24 Provider] Step2:', field, 'typed into Select2 search');
+        return true;
+      }
+    }
+    return false;
   }
 
   function _addEmailToField(container, jq, field, email) {
     console.log('[HW24 Provider] Step2: Adding', field, '=', email);
 
     const $select = _findSelectForField(container, jq, field);
-    if ($select) {
+    if ($select && $select.length) {
       const opt = new Option(email, email, true, true);
       $select.append(opt).trigger('change');
-      $select.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
+      try {
+        $select.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
+      } catch (e) { /* ok */ }
       console.log('[HW24 Provider] Step2:', field, 'added via Select2');
       return;
     }
+
+    // Try typing into Select2 search
+    if (_typeIntoSelect2Search(container, email, field)) return;
 
     _setNativeInput(container, field, email);
   }
 
   function _setNativeInput(container, field, email) {
     const inputSelectors = [
-      `input[name="${field}"]`, `input[name="${field}[]"]`,
-      `input[name="${field}emailids"]`
+      'input[name="' + field + '"]', 'input[name="' + field + '[]"]',
+      'input[name="' + field + 'emailids"]', 'input[name="' + field + 'emailids[]"]'
     ];
     for (const sel of inputSelectors) {
       const input = container.querySelector(sel);
-      if (input && input.offsetParent !== null) {
+      if (input && (input.offsetParent !== null || input.type === 'hidden')) {
         input.value = email;
         input.focus();
         fire(input);
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
-        console.log('[HW24 Provider] Step2:', field, 'set via native input');
+        console.log('[HW24 Provider] Step2:', field, 'set via native input name=' + input.name);
         return;
       }
     }
-    console.warn('[HW24 Provider] Step2: Could not find', field, 'input');
+    console.warn('[HW24 Provider] Step2: Could not find', field, 'input at all');
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -651,19 +840,38 @@
   }
 
   /**
-   * Click the "Include Signature" button to load the email signature.
-   * This must happen BEFORE we read the email body.
+   * Click the "Include Signature" checkbox/button to load the email signature.
+   * IMPORTANT: Must move CKEditor cursor to end FIRST, otherwise signature
+   * gets inserted at position 0 (top of email) instead of at the bottom.
    */
   function clickIncludeSignature(container) {
-    // Look for "Include Signature" button/link
+    // Strategy 1: Checkbox (most common in EMAILMaker)
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+    for (const cb of checkboxes) {
+      const wrapper = cb.closest('label, div, span') || cb.parentElement;
+      const wrapperText = wrapper?.textContent || '';
+      const cbName = (cb.name || cb.id || '').toLowerCase();
+      if (/include.*signature|signatur/i.test(wrapperText) || /signature|signatur/i.test(cbName)) {
+        if (!cb.checked) {
+          cb.click();
+          console.log('[HW24 Provider] Checked "Include Signature" checkbox');
+        } else {
+          console.log('[HW24 Provider] "Include Signature" already checked');
+        }
+        return true;
+      }
+    }
+
+    // Strategy 2: Button/link
     const allClickables = [...container.querySelectorAll('button, a, input[type="button"]')];
     const sigBtn = allClickables.find(el => /include.*signature|signatur.*einf/i.test(el.textContent));
     if (sigBtn) {
       sigBtn.click();
-      console.log('[HW24 Provider] Clicked "Include Signature"');
+      console.log('[HW24 Provider] Clicked "Include Signature" button');
       return true;
     }
-    console.log('[HW24 Provider] "Include Signature" button not found');
+
+    console.log('[HW24 Provider] "Include Signature" button/checkbox not found');
     return false;
   }
 
@@ -686,10 +894,38 @@
     const config = resolveProviderConfig(provider);
     console.log('[HW24 Provider] Filling email for', config.label, '| style:', config.style, '| lang:', config.lang);
 
-    // Step A: Click "Include Signature" to load signature into the editor
     const composeContainer = findComposeContainer() || document.body;
+
+    // Step A: Move CKEditor cursor to END of document before inserting signature.
+    // Without this, "Include Signature" inserts at position 0 (top of email).
+    const ck = getCKEditorInstance();
+    if (ck) {
+      try {
+        const range = ck.createRange();
+        range.moveToElementEditEnd(ck.editable());
+        ck.getSelection().selectRanges([range]);
+        console.log('[HW24 Provider] Cursor moved to end of CKEditor');
+      } catch (e) {
+        console.warn('[HW24 Provider] Could not move cursor to end:', e.message);
+        // Fallback: try via native selection on the iframe
+        try {
+          const iframe = composeContainer.querySelector('iframe.cke_wysiwyg_frame');
+          if (iframe && iframe.contentWindow) {
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+            const sel = iframe.contentWindow.getSelection();
+            sel.selectAllChildren(iframeDoc.body);
+            sel.collapseToEnd();
+            console.log('[HW24 Provider] Cursor moved to end via iframe selection');
+          }
+        } catch (e2) {
+          console.warn('[HW24 Provider] Iframe fallback also failed:', e2.message);
+        }
+      }
+    }
+
+    // Step B: Click "Include Signature" — now inserts at END (correct position)
     clickIncludeSignature(composeContainer);
-    await sleep(800); // Wait for signature to be inserted into CKEditor
+    await sleep(1000); // Wait for signature to be inserted into CKEditor
 
     let data = readEmailHTML();
     if (!data) {
