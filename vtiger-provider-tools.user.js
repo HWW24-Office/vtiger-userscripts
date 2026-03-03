@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.2.0
+// @version      1.2.1
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider-Anfragen: Vorbereitungs-Buttons für Provider-E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.2.0';
+  const HW24_VERSION = '1.2.1';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -568,205 +568,228 @@
     }
   }
 
-  function _findSelectForField(container, jq, field) {
-    // Try many name variants
-    const nameVariants = [
-      field, field + '[]',
-      field + 'emailids', field + 'emailids[]',
-      field + '_email', field + '_email[]',
-      field + 'email', field + 'email[]',
-      'selected_' + field, 'selected' + field
-    ];
+  /* ─────────────────────────────────────────────────────────────────────────
+     EMAILMaker uses Select2 v3.x on <input> elements (NOT <select>):
 
-    // jQuery approach
-    if (jq) {
-      for (const name of nameVariants) {
-        const $select = jq(container).find('select[name="' + name + '"]');
-        if ($select.length) {
-          console.log('[HW24 Provider] Found select for "' + field + '" via name="' + name + '"');
-          return $select;
+     To field DOM structure:
+       <input id="emailField" name="toEmail" class="autoComplete sourceField select2 select2-offscreen">
+       <div id="s2id_emailField" class="select2-container select2-container-multi">
+         <ul class="select2-choices ui-sortable">
+           <li class="select2-search-choice">
+             <div>Customer Name (email@example.com)</div>
+             <a class="select2-search-choice-close" href="#" tabindex="-1"></a>
+           </li>
+           <li class="select2-search-field ui-sortable-handle">
+             <input class="select2-input" placeholder="Type and Search">
+           </li>
+         </ul>
+       </div>
+
+     CC field: similar, inside <div class="row hide ccContainer ccEmailField">
+     ───────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * Find the email input for a recipient field (To or CC).
+   * EMAILMaker uses <input> with Select2, not <select>.
+   */
+  function _findEmailInput(container, field) {
+    // To field: input#emailField, name="toEmail"
+    // CC field: likely inside .ccContainer, name containing "cc"
+    const nameVariants = {
+      to: ['toEmail', 'toemail', 'to', 'toemailids', 'to_email'],
+      cc: ['ccEmail', 'ccemail', 'cc', 'ccemailids', 'cc_email']
+    };
+    const variants = nameVariants[field] || [field, field + 'Email', field + 'email'];
+
+    for (const name of variants) {
+      const input = container.querySelector('input[name="' + name + '"]');
+      if (input) {
+        console.log('[HW24 Provider] Found ' + field + ' input via name="' + name + '" id="' + input.id + '"');
+        return input;
+      }
+    }
+
+    // ID-based: emailField for To, ccEmailField for CC
+    const idVariants = {
+      to: ['emailField', 'toEmailField'],
+      cc: ['ccEmailField', 'ccemailField']
+    };
+    const ids = idVariants[field] || [];
+    for (const id of ids) {
+      const input = container.querySelector('#' + id);
+      if (input) {
+        console.log('[HW24 Provider] Found ' + field + ' input via id="' + id + '"');
+        return input;
+      }
+    }
+
+    // Row-based: find by container class
+    if (field === 'cc') {
+      const ccRow = container.querySelector('.ccContainer, .ccEmailField, [class*="ccContainer"]');
+      if (ccRow) {
+        const input = ccRow.querySelector('input.select2-offscreen, input[type="text"]');
+        if (input) {
+          console.log('[HW24 Provider] Found cc input inside .ccContainer');
+          return input;
         }
       }
     }
 
-    // Native fallback
-    for (const name of nameVariants) {
-      const sel = container.querySelector('select[name="' + name + '"]');
-      if (sel) {
-        console.log('[HW24 Provider] Found native select for "' + field + '" via name="' + name + '"');
-        return jq ? jq(sel) : null;
-      }
-    }
+    console.warn('[HW24 Provider] Could not find ' + field + ' input element');
+    return null;
+  }
 
-    // Label-based: find a label with the field name, then find the select in the same row
-    const labels = container.querySelectorAll('label, .fieldLabel, td, .control-label, span.fieldLabel');
-    for (const label of labels) {
-      const text = label.textContent.trim().toLowerCase().replace(':', '');
-      if (text === field || text === field + ':') {
-        const row = label.closest('.row, tr, .form-group, .control-group') || label.parentElement;
-        const sel = row?.querySelector('select');
-        if (sel && jq) {
-          console.log('[HW24 Provider] Found select for "' + field + '" via label');
-          return jq(sel);
-        }
-      }
+  /**
+   * Find the Select2 container for a given input element.
+   * Select2 v3.x creates: <div id="s2id_{inputId}" class="select2-container">
+   */
+  function _findSelect2Container(input) {
+    if (input.id) {
+      const s2c = document.getElementById('s2id_' + input.id);
+      if (s2c) return s2c;
     }
-
+    // Fallback: the Select2 container is the next sibling or previous sibling
+    const sibling = input.previousElementSibling || input.nextElementSibling;
+    if (sibling && sibling.classList?.contains('select2-container')) return sibling;
+    // Or find it in the same parent
+    const parent = input.parentElement;
+    if (parent) {
+      const s2c = parent.querySelector('.select2-container');
+      if (s2c) return s2c;
+    }
     return null;
   }
 
   function _clearAndSetToField(container, jq, email) {
     console.log('[HW24 Provider] Step2: Clearing To and setting to', email);
 
-    // Strategy 1: Find To select via heuristics
-    let $toSelect = _findSelectForField(container, jq, 'to');
+    const toInput = _findEmailInput(container, 'to');
 
-    // Strategy 1b: If not found, try the first multiple select that's not from/cc/bcc
-    if (!$toSelect && jq) {
-      const allSelects = container.querySelectorAll('select[multiple]');
-      for (const sel of allSelects) {
-        const name = (sel.name || sel.id || '').toLowerCase();
-        if (name.includes('from') || name.includes('bcc')) continue;
-        // Skip if it's clearly a CC field
-        if (name.includes('cc') && !name.includes('bcc')) continue;
-        $toSelect = jq(sel);
-        console.log('[HW24 Provider] Using first multiple select as To: name=' + sel.name + ' id=' + sel.id);
+    // Strategy 1: Select2 v3.x jQuery API on the input
+    if (toInput && jq) {
+      const $input = jq(toInput);
+      try {
+        // Check if Select2 is initialized on this input
+        const hasSelect2 = $input.data('select2');
+        if (hasSelect2) {
+          // Clear existing data
+          $input.select2('data', []);
+          console.log('[HW24 Provider] Step2: Cleared To via select2("data", [])');
+          // Set new email
+          $input.select2('data', [{ id: email, text: email }]);
+          console.log('[HW24 Provider] Step2: To set to', email, 'via select2("data")');
+          return;
+        }
+      } catch (e) {
+        console.log('[HW24 Provider] Step2: select2() API failed:', e.message, '— trying fallbacks');
+      }
+    }
+
+    // Strategy 2: Click close buttons on existing Select2 tags, then type email
+    if (toInput) {
+      const s2container = _findSelect2Container(toInput);
+      if (s2container) {
+        // Click all "x" close buttons to remove existing recipients
+        const closeBtns = s2container.querySelectorAll('.select2-search-choice-close');
+        for (const btn of closeBtns) {
+          btn.click();
+          console.log('[HW24 Provider] Step2: Clicked select2-search-choice-close');
+        }
+
+        // Type into the Select2 search input
+        setTimeout(() => {
+          const searchInput = s2container.querySelector('.select2-search-field input, .select2-input, input.select2-input');
+          if (searchInput) {
+            searchInput.value = email;
+            searchInput.focus();
+            fire(searchInput);
+            // Trigger Select2's internal search mechanism
+            searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+            // Wait briefly then press Enter to confirm the typed email
+            setTimeout(() => {
+              searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+              console.log('[HW24 Provider] Step2: To typed + Enter in Select2 search');
+            }, 400);
+          } else {
+            console.warn('[HW24 Provider] Step2: Select2 search input not found in container');
+          }
+        }, 300);
+        return;
+      }
+    }
+
+    // Strategy 3: Brute force — find ANY select2-search-choice-close not in CC/BCC row
+    console.log('[HW24 Provider] Step2: Brute force — clicking close buttons outside CC/BCC');
+    const allCloseBtns = container.querySelectorAll('.select2-search-choice-close');
+    for (const btn of allCloseBtns) {
+      const row = btn.closest('.row, .form-group');
+      if (row && (row.classList.contains('ccContainer') || row.classList.contains('bccContainer')
+        || row.classList.contains('ccEmailField') || row.classList.contains('bccEmailField'))) continue;
+      btn.click();
+      console.log('[HW24 Provider] Step2: Brute force removed a Select2 tag');
+    }
+
+    // Then find any select2 search field to type into
+    setTimeout(() => {
+      const searchInputs = container.querySelectorAll('.select2-search-field input, input.select2-input');
+      for (const input of searchInputs) {
+        const row = input.closest('.row, .form-group');
+        if (row && (row.classList.contains('ccContainer') || row.classList.contains('bccContainer'))) continue;
+        input.value = email;
+        input.focus();
+        fire(input);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        setTimeout(() => {
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        }, 400);
+        console.log('[HW24 Provider] Step2: Brute force typed email into first search input');
         break;
       }
-    }
-
-    if ($toSelect && $toSelect.length) {
-      // Clear all existing selections
-      try {
-        $toSelect.val(null).trigger('change');
-        // Remove all option elements
-        $toSelect.find('option').remove();
-        console.log('[HW24 Provider] Step2: Cleared To select via jQuery');
-      } catch (e) {
-        console.log('[HW24 Provider] Step2: jQuery clear failed:', e.message);
-      }
-
-      // Also click all "x" remove buttons on Select2 tags in the To row
-      _clickRemoveButtonsForSelect($toSelect[0], container);
-
-      // Add provider email as new option
-      const opt = new Option(email, email, true, true);
-      $toSelect.append(opt).trigger('change');
-      try {
-        $toSelect.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
-      } catch (e) { /* ok */ }
-      console.log('[HW24 Provider] Step2: To set to', email, 'via Select2');
-      return;
-    }
-
-    // Strategy 2: Click all "x" remove buttons on Select2 tags (brute force)
-    console.log('[HW24 Provider] Step2: No To select found, trying Select2 tag removal');
-    const removeButtons = container.querySelectorAll('.select2-selection__choice__remove, .select2-selection__choice__display + .select2-selection__choice__remove');
-    let removedCount = 0;
-    for (const btn of removeButtons) {
-      // Only remove from the first recipient row (To is first)
-      const select2Container = btn.closest('.select2-container');
-      if (select2Container) {
-        // Check if this is the first select2 (To) or a later one (CC/BCC)
-        const allSelect2 = [...container.querySelectorAll('.select2-container')];
-        const idx = allSelect2.indexOf(select2Container);
-        // The first select2 after From might be To (From is usually index 0)
-        if (idx <= 1) {
-          btn.click();
-          removedCount++;
-        }
-      }
-    }
-    if (removedCount > 0) {
-      console.log('[HW24 Provider] Step2: Removed', removedCount, 'Select2 tags');
-    }
-
-    // Strategy 3: Try typing into Select2 search input
-    _typeIntoSelect2Search(container, email, 'to');
-
-    // Fallback: native input
-    _setNativeInput(container, 'to', email);
-  }
-
-  function _clickRemoveButtonsForSelect(selectEl, container) {
-    // Find the Select2 container that belongs to this select element
-    const select2Id = selectEl.id ? 'select2-' + selectEl.id : null;
-    if (!select2Id) return;
-    const s2container = container.querySelector('#' + CSS.escape(select2Id) + '-container')
-      || container.querySelector('[id*="' + selectEl.id + '"].select2-container')
-      || selectEl.nextElementSibling;
-    if (s2container) {
-      const removeButtons = s2container.querySelectorAll('.select2-selection__choice__remove');
-      for (const btn of removeButtons) {
-        btn.click();
-        console.log('[HW24 Provider] Step2: Clicked x on Select2 tag');
-      }
-    }
-  }
-
-  function _typeIntoSelect2Search(container, email, field) {
-    // Find Select2 search input in the To row
-    const labels = container.querySelectorAll('label, .fieldLabel, td, .control-label');
-    for (const label of labels) {
-      const text = label.textContent.trim().toLowerCase().replace(':', '');
-      if (text !== field && text !== field + ':') continue;
-      const row = label.closest('.row, tr, .form-group, .control-group') || label.parentElement;
-      if (!row) continue;
-      const searchInput = row.querySelector('.select2-search__field, .select2-search input, input.select2-input');
-      if (searchInput) {
-        searchInput.value = email;
-        searchInput.focus();
-        fire(searchInput);
-        // Simulate Enter key
-        searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
-        setTimeout(() => {
-          searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
-        }, 50);
-        console.log('[HW24 Provider] Step2:', field, 'typed into Select2 search');
-        return true;
-      }
-    }
-    return false;
+    }, 300);
   }
 
   function _addEmailToField(container, jq, field, email) {
     console.log('[HW24 Provider] Step2: Adding', field, '=', email);
 
-    const $select = _findSelectForField(container, jq, field);
-    if ($select && $select.length) {
-      const opt = new Option(email, email, true, true);
-      $select.append(opt).trigger('change');
+    const input = _findEmailInput(container, field);
+
+    // Strategy 1: Select2 v3.x API
+    if (input && jq) {
+      const $input = jq(input);
       try {
-        $select.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
-      } catch (e) { /* ok */ }
-      console.log('[HW24 Provider] Step2:', field, 'added via Select2');
-      return;
-    }
-
-    // Try typing into Select2 search
-    if (_typeIntoSelect2Search(container, email, field)) return;
-
-    _setNativeInput(container, field, email);
-  }
-
-  function _setNativeInput(container, field, email) {
-    const inputSelectors = [
-      'input[name="' + field + '"]', 'input[name="' + field + '[]"]',
-      'input[name="' + field + 'emailids"]', 'input[name="' + field + 'emailids[]"]'
-    ];
-    for (const sel of inputSelectors) {
-      const input = container.querySelector(sel);
-      if (input && (input.offsetParent !== null || input.type === 'hidden')) {
-        input.value = email;
-        input.focus();
-        fire(input);
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
-        console.log('[HW24 Provider] Step2:', field, 'set via native input name=' + input.name);
-        return;
+        const hasSelect2 = $input.data('select2');
+        if (hasSelect2) {
+          const existing = $input.select2('data') || [];
+          existing.push({ id: email, text: email });
+          $input.select2('data', existing);
+          console.log('[HW24 Provider] Step2:', field, 'added via select2("data")');
+          return;
+        }
+      } catch (e) {
+        console.log('[HW24 Provider] Step2: select2() API failed for', field, ':', e.message);
       }
     }
-    console.warn('[HW24 Provider] Step2: Could not find', field, 'input at all');
+
+    // Strategy 2: Type into Select2 search input
+    if (input) {
+      const s2container = _findSelect2Container(input);
+      if (s2container) {
+        const searchInput = s2container.querySelector('.select2-search-field input, .select2-input');
+        if (searchInput) {
+          searchInput.value = email;
+          searchInput.focus();
+          fire(searchInput);
+          searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+          setTimeout(() => {
+            searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+          }, 400);
+          console.log('[HW24 Provider] Step2:', field, 'typed + Enter in Select2 search');
+          return;
+        }
+      }
+    }
+
+    console.warn('[HW24 Provider] Step2: Could not add', field, '=', email);
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
