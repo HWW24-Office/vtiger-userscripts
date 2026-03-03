@@ -230,7 +230,23 @@
   }
 
   /**
+   * Get VTiger CSRF token (required for SaveAjax).
+   */
+  function _getCsrfToken() {
+    // Strategy 1: Global variable set by VTiger
+    if (typeof csrfMagicToken !== 'undefined') return csrfMagicToken;
+    // Strategy 2: Hidden input in DOM
+    const input = document.querySelector('input[name="__vtrftk"]');
+    if (input) return input.value;
+    // Strategy 3: Meta tag
+    const meta = document.querySelector('meta[name="__vtrftk"], meta[name="csrf-token"]');
+    if (meta) return meta.content;
+    return '';
+  }
+
+  /**
    * Set the provider status on the Potentials record via VTiger SaveAjax.
+   * Uses VTiger's AppConnector (preferred) or jQuery.ajax with CSRF token.
    */
   async function setProviderStatus(statusValue) {
     const recordId = _getRecordId();
@@ -263,12 +279,73 @@
 
     console.log('[HW24 Provider] Setting status field', fieldName, '=', newValue);
 
+    const saveParams = {
+      module: 'Potentials',
+      action: 'SaveAjax',
+      record: recordId,
+      field: fieldName,
+      value: newValue
+    };
+
+    // Strategy 1: VTiger's built-in AppConnector (handles CSRF automatically)
+    if (typeof AppConnector !== 'undefined' && AppConnector.request) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          AppConnector.request(saveParams).then(resolve, reject);
+        });
+        console.log('[HW24 Provider] Status saved via AppConnector:', result);
+        _updateStatusUI(fieldName, newValue);
+        return true;
+      } catch (e) {
+        console.log('[HW24 Provider] AppConnector failed:', e, '— trying jQuery');
+      }
+    }
+
+    // Strategy 2: VTiger's app.request (some VTiger versions)
+    if (typeof app !== 'undefined' && app.request && app.request.post) {
+      try {
+        const result = await app.request.post({ data: saveParams });
+        console.log('[HW24 Provider] Status saved via app.request:', result);
+        _updateStatusUI(fieldName, newValue);
+        return true;
+      } catch (e) {
+        console.log('[HW24 Provider] app.request failed:', e, '— trying jQuery');
+      }
+    }
+
+    // Strategy 3: jQuery AJAX with CSRF token
+    const jq = window.jQuery || window.$;
+    const csrfToken = _getCsrfToken();
+    if (jq) {
+      const ajaxParams = { ...saveParams };
+      if (csrfToken) ajaxParams.__vtrftk = csrfToken;
+      try {
+        const result = await new Promise((resolve, reject) => {
+          jq.ajax({
+            url: 'index.php',
+            type: 'POST',
+            data: ajaxParams,
+            success: resolve,
+            error: reject
+          });
+        });
+        console.log('[HW24 Provider] Status saved via jQuery AJAX:', result);
+        _updateStatusUI(fieldName, newValue);
+        return true;
+      } catch (e) {
+        console.log('[HW24 Provider] jQuery AJAX failed:', e, '— trying fetch');
+      }
+    }
+
+    // Strategy 4: Plain fetch with CSRF token
     try {
       const params = new URLSearchParams();
       params.append('module', 'Potentials');
       params.append('action', 'SaveAjax');
       params.append('record', recordId);
-      params.append(fieldName, newValue);
+      params.append('field', fieldName);
+      params.append('value', newValue);
+      if (csrfToken) params.append('__vtrftk', csrfToken);
 
       const response = await fetch('index.php', {
         method: 'POST',
@@ -278,21 +355,23 @@
 
       if (response.ok) {
         const result = await response.json().catch(() => null);
-        console.log('[HW24 Provider] Status saved successfully:', result);
-
-        // Update the UI element on the detail view
-        const valueEl = document.querySelector('[id*="_detailView_fieldValue_' + fieldName + '"]');
-        if (valueEl) {
-          valueEl.textContent = newValue.replace(/\s*\|##\|\s*/g, ', ');
-        }
+        console.log('[HW24 Provider] Status saved via fetch:', result);
+        _updateStatusUI(fieldName, newValue);
         return true;
       } else {
         console.error('[HW24 Provider] Status save failed: HTTP', response.status);
       }
     } catch (e) {
-      console.error('[HW24 Provider] Status save error:', e);
+      console.error('[HW24 Provider] All save strategies failed:', e);
     }
     return false;
+  }
+
+  function _updateStatusUI(fieldName, newValue) {
+    const valueEl = document.querySelector('[id*="_detailView_fieldValue_' + fieldName + '"]');
+    if (valueEl) {
+      valueEl.textContent = newValue.replace(/\s*\|##\|\s*/g, ', ');
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
