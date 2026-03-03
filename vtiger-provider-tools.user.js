@@ -178,38 +178,51 @@
   }
 
   /**
-   * Auto-detect the provider status field on the detail view page.
-   * Looks for field value elements containing known status keywords.
+   * Auto-detect the provider status field on the page.
+   * Works in both Summary view and Detail view.
+   * Summary view IDs: Potentials_fieldValue_cf_1234
+   * Detail view IDs:  Potentials_detailView_fieldValue_cf_1234
    */
   function _detectStatusField() {
     if (_statusFieldName) return _statusFieldName;
 
-    // Strategy 1: Search all fieldValue elements for "angefragt" text
-    const allValues = document.querySelectorAll('[id*="_detailView_fieldValue_"]');
+    // Strategy 1: Search ALL fieldValue elements (covers both Summary + Detail view)
+    const allValues = document.querySelectorAll('[id*="fieldValue_"]');
     for (const el of allValues) {
-      const text = el.textContent.trim().toLowerCase();
+      const text = el.textContent.trim();
       if (/angefragt|angeboten|beauftragt/i.test(text)) {
-        // Extract field name from ID: Potentials_detailView_fieldValue_cf_1234 → cf_1234
+        // Extract field name from ID: ...fieldValue_cf_1234 → cf_1234
         const match = el.id.match(/fieldValue_(.+)$/);
         if (match) {
           _statusFieldName = match[1];
-          // Check if it's a multipicklist (contains separator or multiple values)
-          _statusFieldIsMulti = text.includes(',') || text.includes('|##|') || el.querySelector('.tag');
-          console.log('[HW24 Provider] Status field detected:', _statusFieldName, 'multi:', _statusFieldIsMulti);
+          console.log('[HW24 Provider] Status field detected:', _statusFieldName, 'from element:', el.id);
           return _statusFieldName;
         }
       }
     }
 
-    // Strategy 2: Search for label "Provider Status", "Anfrage Status", "Status Provider" etc.
-    const allLabels = document.querySelectorAll('[id*="_detailView_fieldLabel_"]');
+    // Strategy 2: Search ALL fieldLabel elements for provider/status keywords
+    const allLabels = document.querySelectorAll('[id*="fieldLabel_"]');
     for (const lbl of allLabels) {
       const text = lbl.textContent.trim().toLowerCase();
-      if (/provider.*status|status.*provider|anfrage.*status|lieferant/i.test(text)) {
+      if (/provider.*status|status.*provider|anfrage.*status|provider.*info|lieferant/i.test(text)) {
         const fieldName = lbl.id.match(/fieldLabel_(.+)$/)?.[1];
         if (fieldName) {
           _statusFieldName = fieldName;
-          console.log('[HW24 Provider] Status field detected via label:', _statusFieldName);
+          console.log('[HW24 Provider] Status field detected via label:', _statusFieldName, 'from:', lbl.id);
+          return _statusFieldName;
+        }
+      }
+    }
+
+    // Strategy 3: Look for any element with class "fieldValue" containing status keywords
+    const classValues = document.querySelectorAll('.fieldValue, .value, [data-field-name]');
+    for (const el of classValues) {
+      if (/angefragt|angeboten|beauftragt/i.test(el.textContent.trim())) {
+        const dataField = el.dataset?.fieldName || el.dataset?.name;
+        if (dataField) {
+          _statusFieldName = dataField;
+          console.log('[HW24 Provider] Status field detected via data-attribute:', _statusFieldName);
           return _statusFieldName;
         }
       }
@@ -220,13 +233,27 @@
   }
 
   /**
-   * Read the current value of the status field from the detail view.
+   * Find ALL status field value elements on the page (Summary + Detail view).
+   */
+  function _findStatusElements(fieldName) {
+    return document.querySelectorAll(
+      '[id*="fieldValue_' + fieldName + '"], ' +
+      '[data-field-name="' + fieldName + '"]'
+    );
+  }
+
+  /**
+   * Read the current value of the status field from whichever view is visible.
    */
   function _readCurrentStatus() {
     const fieldName = _detectStatusField();
     if (!fieldName) return '';
-    const el = document.querySelector('[id*="_detailView_fieldValue_' + fieldName + '"]');
-    return el ? el.textContent.trim() : '';
+    const elements = _findStatusElements(fieldName);
+    for (const el of elements) {
+      const text = el.textContent.trim();
+      if (text) return text;
+    }
+    return '';
   }
 
   /**
@@ -368,10 +395,13 @@
   }
 
   function _updateStatusUI(fieldName, newValue) {
-    const valueEl = document.querySelector('[id*="_detailView_fieldValue_' + fieldName + '"]');
-    if (valueEl) {
-      valueEl.textContent = newValue.replace(/\s*\|##\|\s*/g, ', ');
+    const displayValue = newValue.replace(/\s*\|##\|\s*/g, ', ');
+    // Update ALL matching elements (Summary view + Detail view)
+    const elements = _findStatusElements(fieldName);
+    for (const el of elements) {
+      el.textContent = displayValue;
     }
+    console.log('[HW24 Provider] UI updated (' + elements.length + ' elements):', displayValue);
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
