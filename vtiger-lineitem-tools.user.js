@@ -2909,7 +2909,8 @@
 
       // D) Pronoun replacements (specific noun phrases first, then generic)
       result = result.replace(/\b[Ii]hr Angebot\b/g, 'das Angebot');
-      result = result.replace(/\b[Ii]hr pers\u00F6nliches Angebot\b/g, 'dein pers\u00F6nliches Angebot');
+      result = result.replace(/\bIhr pers\u00F6nliches Angebot\b/g, 'Dein pers\u00F6nliches Angebot');
+      result = result.replace(/\bihr pers\u00F6nliches Angebot\b/g, 'dein pers\u00F6nliches Angebot');
       // Possessive: Uppercase Ihr→Dein (beginning of phrase/line), lowercase ihr→dein
       result = result.replace(/\bIhre\b/g, 'Deine');
       result = result.replace(/\bihre\b/g, 'deine');
@@ -2941,7 +2942,7 @@
       // D3) Lowercase pronouns mid-sentence (". Dein" stays, but "für Deine" → "für deine")
       // After sentence boundaries or line starts: keep uppercase
       // Mid-sentence (after lowercase word + space): lowercase Dein/Deine/Dir etc.
-      result = result.replace(/(\b(?:f\u00FCr|zu|mit|auf|an|in|um|von|bei|aus|nach|vor|bis|\u00FCber|unter|zwischen|durch|gegen|ohne|wegen|trotz|seit|und|oder|aber|dass|ob|weil|wenn|als|wie|auch|noch|schon|mal|bitte|vielen|herzlichen)\s+)(D)(ein\b|eine\b|einem\b|einen\b|einer\b|ir\b)/g,
+      result = result.replace(/(\b(?:du|f\u00FCr|zu|mit|auf|an|in|um|von|bei|aus|nach|vor|bis|\u00FCber|unter|zwischen|durch|gegen|ohne|wegen|trotz|seit|und|oder|aber|dass|ob|weil|wenn|als|wie|auch|noch|schon|mal|bitte|vielen|herzlichen)\s+)(D)(ein\b|eine\b|einem\b|einen\b|einer\b|ir\b)/g,
         (m, prefix, d, suffix) => prefix + 'd' + suffix);
 
       // E) Closing formula: replace MfG → Liebe Grüße, append user first name AFTER
