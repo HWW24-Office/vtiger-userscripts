@@ -245,15 +245,16 @@
       return false;
     }
 
-    // Build new value
+    // Build new value — always treat as multipicklist (append, never replace)
     let newValue = statusValue;
     const currentValue = _readCurrentStatus();
 
-    if (_statusFieldIsMulti && currentValue) {
-      // Multipicklist: split on VTiger separator " |##| " or comma
+    if (currentValue) {
+      // Split on VTiger separator " |##| " or comma (display format)
       const existing = currentValue.includes('|##|')
         ? currentValue.split(/\s*\|##\|\s*/)
         : currentValue.split(/\s*,\s*/);
+      // Only add if not already present
       if (!existing.includes(statusValue)) {
         existing.push(statusValue);
       }
