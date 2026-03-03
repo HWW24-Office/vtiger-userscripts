@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.2.1
+// @version      1.3.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider-Anfragen: Vorbereitungs-Buttons für Provider-E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.2.1';
+  const HW24_VERSION = '1.3.0';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -56,7 +56,7 @@
      PROVIDER CONFIGURATION
      ═══════════════════════════════════════════════════════════════════════════
      All providers default to PerDu style.
-     Axians has a "Sie" toggle (default = du, checkbox flips to formal).
+     Axians, DIS, TD Synnex have a "Sie" toggle (default = du, checkbox flips to formal).
      ═══════════════════════════════════════════════════════════════════════════ */
 
   const PROVIDERS = [
@@ -65,10 +65,12 @@
                                                                                                                    greetingSie: 'Hallo Herr Kienzle,', hasSieToggle: true },
     { key: 'PP',    label: 'Park Place', to: 'jchiaju@parkplacetech.com',  cc: 'partnersales@parkplacetech.com', greeting: 'Hallo Justine,',     style: 'du',  lang: 'de', status: 'angefragt PP' },
     { key: 'ITRIS', label: 'ITRIS',      to: 'kkroner@itris.de',           cc: '',                               greeting: 'Hallo Katrin,',      style: 'du',  lang: 'de', status: 'angefragt ITRIS' },
-    { key: 'DIS',   label: 'DIS',        to: 'anfragen@dis-daten-it.de',   cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de', status: 'angefragt DIS' },
+    { key: 'DIS',   label: 'DIS',        to: 'anfragen@dis-daten-it.de',   cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de', status: 'angefragt DIS',
+                                                                                                                   greetingSie: 'Hallo Team,', hasSieToggle: true },
     { key: 'IDS',   label: 'IDS',        to: 'o.hermann@idsgmbh.com',      cc: '',                               greeting: 'Hallo Olga,',        style: 'du',  lang: 'de', status: 'angefragt IDS' },
     { key: 'Nordic', label: 'Nordic',    to: 'ksp@nordiccomputer.com',     cc: '',                               greeting: 'Hello Kevon,',       style: 'du',  lang: 'en', status: 'angefragt Nordic' },
-    { key: 'TDS',   label: 'TD Synnex',  to: 'Sales.at@tdsynnex.com',      cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de', status: 'angefragt TD Synnex' },
+    { key: 'TDS',   label: 'TD Synnex',  to: 'Sales.at@tdsynnex.com',      cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de', status: 'angefragt TD Synnex',
+                                                                                                                   greetingSie: 'Hallo Team,', hasSieToggle: true },
   ];
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -79,8 +81,14 @@
   let pendingDescriptionText = '';  // cached from detail view before popup opens
   let step1Handled = false;
 
-  // Axians "Sie" toggle: true = formal/Sie, false = du (default)
-  let axiansSie = localStorage.getItem('hw24_provider_axians_sie') === 'true';
+  // Per-provider "Sie" toggle: true = formal/Sie, false = du (default)
+  // Each provider with hasSieToggle gets its own localStorage key
+  function getSieToggle(providerKey) {
+    return localStorage.getItem('hw24_provider_' + providerKey.toLowerCase() + '_sie') === 'true';
+  }
+  function setSieToggle(providerKey, value) {
+    localStorage.setItem('hw24_provider_' + providerKey.toLowerCase() + '_sie', value ? 'true' : 'false');
+  }
 
   const DETAIL_TOOLBAR_ID = 'hw24-provider-toolbar';
   const COMPOSE_TOOLBAR_ID = 'hw24-provider-email-toolbar';
@@ -90,7 +98,7 @@
      ═══════════════════════════════════════════════════════════════════════════ */
 
   function resolveProviderConfig(provider) {
-    if (provider.hasSieToggle && axiansSie) {
+    if (provider.hasSieToggle && getSieToggle(provider.key)) {
       return {
         ...provider,
         greeting: provider.greetingSie || provider.greeting,
@@ -150,6 +158,140 @@
 
     console.warn('[HW24 Provider] Description field not found');
     return '';
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 1b: PROVIDER STATUS — AUTO-UPDATE VIA SAVEAJAX
+     ═══════════════════════════════════════════════════════════════════════════
+     Each provider has a `status` value like "angefragt TG".
+     This is written to a picklist/multipicklist field on the Potentials record.
+     The field is auto-detected by scanning for known status values.
+     VTiger multipicklist separator: " |##| "
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  // Cache the detected field name so we only search once
+  let _statusFieldName = null;
+  let _statusFieldIsMulti = false;
+
+  function _getRecordId() {
+    return (location.href.match(/record=(\d+)/) || [])[1] || '';
+  }
+
+  /**
+   * Auto-detect the provider status field on the detail view page.
+   * Looks for field value elements containing known status keywords.
+   */
+  function _detectStatusField() {
+    if (_statusFieldName) return _statusFieldName;
+
+    // Strategy 1: Search all fieldValue elements for "angefragt" text
+    const allValues = document.querySelectorAll('[id*="_detailView_fieldValue_"]');
+    for (const el of allValues) {
+      const text = el.textContent.trim().toLowerCase();
+      if (/angefragt|angeboten|beauftragt/i.test(text)) {
+        // Extract field name from ID: Potentials_detailView_fieldValue_cf_1234 → cf_1234
+        const match = el.id.match(/fieldValue_(.+)$/);
+        if (match) {
+          _statusFieldName = match[1];
+          // Check if it's a multipicklist (contains separator or multiple values)
+          _statusFieldIsMulti = text.includes(',') || text.includes('|##|') || el.querySelector('.tag');
+          console.log('[HW24 Provider] Status field detected:', _statusFieldName, 'multi:', _statusFieldIsMulti);
+          return _statusFieldName;
+        }
+      }
+    }
+
+    // Strategy 2: Search for label "Provider Status", "Anfrage Status", "Status Provider" etc.
+    const allLabels = document.querySelectorAll('[id*="_detailView_fieldLabel_"]');
+    for (const lbl of allLabels) {
+      const text = lbl.textContent.trim().toLowerCase();
+      if (/provider.*status|status.*provider|anfrage.*status|lieferant/i.test(text)) {
+        const fieldName = lbl.id.match(/fieldLabel_(.+)$/)?.[1];
+        if (fieldName) {
+          _statusFieldName = fieldName;
+          console.log('[HW24 Provider] Status field detected via label:', _statusFieldName);
+          return _statusFieldName;
+        }
+      }
+    }
+
+    console.warn('[HW24 Provider] Could not auto-detect status field');
+    return null;
+  }
+
+  /**
+   * Read the current value of the status field from the detail view.
+   */
+  function _readCurrentStatus() {
+    const fieldName = _detectStatusField();
+    if (!fieldName) return '';
+    const el = document.querySelector('[id*="_detailView_fieldValue_' + fieldName + '"]');
+    return el ? el.textContent.trim() : '';
+  }
+
+  /**
+   * Set the provider status on the Potentials record via VTiger SaveAjax.
+   */
+  async function setProviderStatus(statusValue) {
+    const recordId = _getRecordId();
+    if (!recordId) {
+      console.warn('[HW24 Provider] Record ID not found — cannot set status');
+      return false;
+    }
+
+    const fieldName = _detectStatusField();
+    if (!fieldName) {
+      console.warn('[HW24 Provider] Status field not detected — cannot set status');
+      return false;
+    }
+
+    // Build new value
+    let newValue = statusValue;
+    const currentValue = _readCurrentStatus();
+
+    if (_statusFieldIsMulti && currentValue) {
+      // Multipicklist: split on VTiger separator " |##| " or comma
+      const existing = currentValue.includes('|##|')
+        ? currentValue.split(/\s*\|##\|\s*/)
+        : currentValue.split(/\s*,\s*/);
+      if (!existing.includes(statusValue)) {
+        existing.push(statusValue);
+      }
+      newValue = existing.join(' |##| ');
+    }
+
+    console.log('[HW24 Provider] Setting status field', fieldName, '=', newValue);
+
+    try {
+      const params = new URLSearchParams();
+      params.append('module', 'Potentials');
+      params.append('action', 'SaveAjax');
+      params.append('record', recordId);
+      params.append(fieldName, newValue);
+
+      const response = await fetch('index.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString()
+      });
+
+      if (response.ok) {
+        const result = await response.json().catch(() => null);
+        console.log('[HW24 Provider] Status saved successfully:', result);
+
+        // Update the UI element on the detail view
+        const valueEl = document.querySelector('[id*="_detailView_fieldValue_' + fieldName + '"]');
+        if (valueEl) {
+          valueEl.textContent = newValue.replace(/\s*\|##\|\s*/g, ', ');
+        }
+        return true;
+      } else {
+        console.error('[HW24 Provider] Status save failed: HTTP', response.status);
+      }
+    } catch (e) {
+      console.error('[HW24 Provider] Status save error:', e);
+    }
+    return false;
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1283,6 +1425,12 @@
     // Mark button as loading
     markDetailButton(provider.key, 'loading');
 
+    // Set provider status on the record (async, don't block)
+    setProviderStatus(config.status).then(ok => {
+      if (ok) console.log('[HW24 Provider] Status "' + config.status + '" saved');
+      else console.warn('[HW24 Provider] Status could not be saved (field not found or save failed)');
+    });
+
     // Trigger EMAILMaker — opens Popup 1 (Step 1)
     triggerEMAILMakerCompose();
   }
@@ -1355,20 +1503,20 @@
       btn.onclick = () => handleProviderClick(provider);
       toolbar.appendChild(btn);
 
-      // After Axians button: "Sie" checkbox toggle (unchecked = du, checked = Sie/formal)
+      // "Sie" checkbox toggle (unchecked = du/default, checked = Sie/formal)
       if (provider.hasSieToggle) {
+        const pKey = provider.key;
         const toggleWrap = document.createElement('label');
         toggleWrap.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font-size:11px;color:#6d28d9;cursor:pointer;margin-left:-4px;margin-right:2px;user-select:none;';
-        toggleWrap.title = 'Axians formell (Sie) ansprechen (gespeichert)';
+        toggleWrap.title = provider.label + ' formell (Sie) ansprechen (gespeichert)';
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.checked = axiansSie;
+        checkbox.checked = getSieToggle(pKey);
         checkbox.style.cssText = 'cursor:pointer;accent-color:#7c3aed;';
         checkbox.onchange = () => {
-          axiansSie = checkbox.checked;
-          localStorage.setItem('hw24_provider_axians_sie', axiansSie ? 'true' : 'false');
-          console.log('[HW24 Provider] Axians Sie toggled:', axiansSie);
+          setSieToggle(pKey, checkbox.checked);
+          console.log('[HW24 Provider]', provider.label, 'Sie toggled:', checkbox.checked);
         };
 
         const text = document.createTextNode('Sie');
