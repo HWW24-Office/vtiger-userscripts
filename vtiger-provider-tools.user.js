@@ -169,9 +169,8 @@
      VTiger multipicklist separator: " |##| "
      ═══════════════════════════════════════════════════════════════════════════ */
 
-  // Cache the detected field name so we only search once
+  // Cache the detected field name (memory + localStorage for cross-view persistence)
   let _statusFieldName = null;
-  let _statusFieldIsMulti = false;
 
   function _getRecordId() {
     return (location.href.match(/record=(\d+)/) || [])[1] || '';
@@ -180,22 +179,29 @@
   /**
    * Auto-detect the provider status field on the page.
    * Works in both Summary view and Detail view.
-   * Summary view IDs: Potentials_fieldValue_cf_1234
-   * Detail view IDs:  Potentials_detailView_fieldValue_cf_1234
+   * Caches field name in localStorage so it survives view switches.
    */
   function _detectStatusField() {
     if (_statusFieldName) return _statusFieldName;
 
-    // Strategy 1: Search ALL fieldValue elements (covers both Summary + Detail view)
+    // Strategy 0: Read from localStorage cache (persists across Summary/Detail switch)
+    const cached = localStorage.getItem('hw24_provider_status_fieldname');
+    if (cached) {
+      _statusFieldName = cached;
+      console.log('[HW24 Provider] Status field from cache:', _statusFieldName);
+      return _statusFieldName;
+    }
+
+    // Strategy 1: Search ALL fieldValue elements for "angefragt" text
     const allValues = document.querySelectorAll('[id*="fieldValue_"]');
     for (const el of allValues) {
       const text = el.textContent.trim();
       if (/angefragt|angeboten|beauftragt/i.test(text)) {
-        // Extract field name from ID: ...fieldValue_cf_1234 → cf_1234
         const match = el.id.match(/fieldValue_(.+)$/);
         if (match) {
           _statusFieldName = match[1];
-          console.log('[HW24 Provider] Status field detected:', _statusFieldName, 'from element:', el.id);
+          localStorage.setItem('hw24_provider_status_fieldname', _statusFieldName);
+          console.log('[HW24 Provider] Status field detected:', _statusFieldName, 'from:', el.id);
           return _statusFieldName;
         }
       }
@@ -209,20 +215,22 @@
         const fieldName = lbl.id.match(/fieldLabel_(.+)$/)?.[1];
         if (fieldName) {
           _statusFieldName = fieldName;
-          console.log('[HW24 Provider] Status field detected via label:', _statusFieldName, 'from:', lbl.id);
+          localStorage.setItem('hw24_provider_status_fieldname', _statusFieldName);
+          console.log('[HW24 Provider] Status field via label:', _statusFieldName, 'from:', lbl.id);
           return _statusFieldName;
         }
       }
     }
 
-    // Strategy 3: Look for any element with class "fieldValue" containing status keywords
+    // Strategy 3: data-field-name attributes
     const classValues = document.querySelectorAll('.fieldValue, .value, [data-field-name]');
     for (const el of classValues) {
       if (/angefragt|angeboten|beauftragt/i.test(el.textContent.trim())) {
         const dataField = el.dataset?.fieldName || el.dataset?.name;
         if (dataField) {
           _statusFieldName = dataField;
-          console.log('[HW24 Provider] Status field detected via data-attribute:', _statusFieldName);
+          localStorage.setItem('hw24_provider_status_fieldname', _statusFieldName);
+          console.log('[HW24 Provider] Status field via data-attribute:', _statusFieldName);
           return _statusFieldName;
         }
       }
@@ -243,17 +251,46 @@
   }
 
   /**
-   * Read the current value of the status field from whichever view is visible.
+   * Read the current value of the status field.
+   * Tries DOM first (visible in current view), then localStorage cache.
+   * This ensures it works even when the field isn't in the current view's DOM
+   * (e.g. Summary view doesn't render the Provider Info field).
    */
   function _readCurrentStatus() {
     const fieldName = _detectStatusField();
     if (!fieldName) return '';
+    const recordId = _getRecordId();
+
+    // Try DOM first
     const elements = _findStatusElements(fieldName);
     for (const el of elements) {
       const text = el.textContent.trim();
-      if (text) return text;
+      if (text) {
+        // Cache the current value per record
+        if (recordId) localStorage.setItem('hw24_provider_status_val_' + recordId, text);
+        return text;
+      }
     }
+
+    // Fallback: localStorage cache (for when field is not in DOM, e.g. Summary view)
+    if (recordId) {
+      const cached = localStorage.getItem('hw24_provider_status_val_' + recordId);
+      if (cached) {
+        console.log('[HW24 Provider] Status value from cache:', cached);
+        return cached;
+      }
+    }
+
     return '';
+  }
+
+  /**
+   * Cache the saved status value for this record (localStorage + DOM update).
+   */
+  function _cacheStatusValue(newValue) {
+    const recordId = _getRecordId();
+    const displayValue = newValue.replace(/\s*\|##\|\s*/g, ', ');
+    if (recordId) localStorage.setItem('hw24_provider_status_val_' + recordId, displayValue);
   }
 
   /**
@@ -401,7 +438,9 @@
     for (const el of elements) {
       el.textContent = displayValue;
     }
-    console.log('[HW24 Provider] UI updated (' + elements.length + ' elements):', displayValue);
+    // Always cache the value (persists even if no DOM elements found)
+    _cacheStatusValue(newValue);
+    console.log('[HW24 Provider] UI updated (' + elements.length + ' elements), cached:', displayValue);
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
