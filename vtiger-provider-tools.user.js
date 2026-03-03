@@ -71,8 +71,6 @@
     { key: 'TDS',   label: 'TD Synnex',  to: 'Sales.at@tdsynnex.com',      cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de', status: 'angefragt TD Synnex' },
   ];
 
-  const FROM_EMAIL = 'office@hardwarewartung.com';
-
   /* ═══════════════════════════════════════════════════════════════════════════
      STATE
      ═══════════════════════════════════════════════════════════════════════════ */
@@ -455,12 +453,15 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 6: STEP 2 — RECIPIENT SETTING (To, CC, From)
+     MODULE 6: STEP 2 — RECIPIENT SETTING (To, CC)
      ═══════════════════════════════════════════════════════════════════════════
+     From is already set to office@hardwarewartung.com by default — don't touch.
      1. Clear existing To (customer email — would go to wrong person!)
-     2. Set From to office@hardwarewartung.com
-     3. Set To to provider email
-     4. Set CC to provider CC (if any)
+     2. Set To to provider email
+     3. Set CC to provider CC (if any)
+
+     IMPORTANT: select[id*="to"] can accidentally match "from" selects too
+     (e.g. id="fromto..." or similar). We use exact name-based selectors only.
      ═══════════════════════════════════════════════════════════════════════════ */
 
   function setComposeRecipients(container, provider) {
@@ -468,101 +469,92 @@
 
     const jq = window.jQuery || window.$;
 
-    // --- FROM: Set to office@hardwarewartung.com ---
-    _setSelectField(container, jq, ['from', 'fromemail', 'from_email'], FROM_EMAIL, 'From');
-
-    // --- TO: Clear existing, then set provider.to ---
-    _clearAndSetField(container, jq, 'to', provider.to);
+    // --- TO: Clear existing customer email, then set provider.to ---
+    _clearAndSetToField(container, jq, provider.to);
 
     // --- CC: Set if provider has CC ---
     if (provider.cc) {
       setTimeout(() => {
-        // Make CC visible first
-        const addCcLink = container.querySelector('a[data-type="cc"], .addCc, [id*="addCc"], [id*="Cc"], [onclick*="Cc"]');
-        if (addCcLink) {
-          addCcLink.click();
-          console.log('[HW24 Provider] Step2: Clicked "Add Cc" link');
-        }
-        setTimeout(() => {
-          _addToField(container, jq, 'cc', provider.cc);
-        }, 300);
-      }, 500);
-    }
-  }
-
-  function _setSelectField(container, jq, namePatterns, value, label) {
-    if (!jq) return;
-    try {
-      const allSelects = container.querySelectorAll('select');
-      for (const sel of allSelects) {
-        const name = (sel.name || sel.id || '').toLowerCase();
-        if (namePatterns.some(p => name.includes(p))) {
-          // Check if the value exists as an option
-          const options = [...sel.options];
-          const target = options.find(o => o.value.includes(value) || o.text.includes(value));
-          if (target) {
-            sel.value = target.value;
-            fire(sel);
-            try { jq(sel).val(target.value).trigger('change'); } catch {}
-            console.log('[HW24 Provider] Step2:', label, 'set to', target.text || target.value);
-            return;
+        // Make CC visible first — find "Add Cc" link
+        const addCcLinks = container.querySelectorAll('a');
+        for (const a of addCcLinks) {
+          if (/add\s*cc/i.test(a.textContent)) {
+            a.click();
+            console.log('[HW24 Provider] Step2: Clicked "Add Cc" link');
+            break;
           }
         }
-      }
-    } catch (e) {
-      console.log('[HW24 Provider] Step2:', label, 'selection failed:', e.message);
+        setTimeout(() => {
+          _addEmailToField(container, jq, 'cc', provider.cc);
+        }, 400);
+      }, 600);
     }
   }
 
-  function _clearAndSetField(container, jq, field, email) {
-    console.log('[HW24 Provider] Step2: Clearing', field, 'and setting to', email);
+  function _findSelectForField(container, jq, field) {
+    if (!jq) return null;
+    // Use EXACT name matching to avoid cross-matching (e.g. "to" matching "from")
+    const exactSelectors = [
+      `select[name="${field}"]`,
+      `select[name="${field}[]"]`,
+      `select[name="${field}emailids"]`,
+      `select[name="${field}emailids[]"]`
+    ];
+    for (const sel of exactSelectors) {
+      const $select = jq(container).find(sel);
+      if ($select.length) return $select;
+    }
+    return null;
+  }
 
-    if (jq) {
-      // Try Select2 approach — most likely in VTiger
-      const selectors = [
-        `select[name="${field}"]`, `select[name="${field}[]"]`,
-        `select[name="${field}emailids"]`, `select[name="${field}emailids[]"]`,
-        `select[id*="${field}"]`
-      ];
-      for (const sel of selectors) {
-        const $select = jq(container).find(sel);
-        if ($select.length) {
-          // Clear all existing options/values
-          $select.val(null).trigger('change');
-          $select.find('option').remove();
-          // Add new option
-          const opt = new Option(email, email, true, true);
-          $select.append(opt).trigger('change');
-          $select.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
-          console.log('[HW24 Provider] Step2:', field, 'cleared and set via Select2:', sel);
-          return;
-        }
+  function _clearAndSetToField(container, jq, email) {
+    console.log('[HW24 Provider] Step2: Clearing To and setting to', email);
+
+    // Strategy 1: Click all "x" remove buttons on existing Select2 tags
+    const removeButtons = container.querySelectorAll('.select2-selection__choice__remove');
+    let removedAny = false;
+    for (const btn of removeButtons) {
+      // Only remove from the To row — check parent context
+      const row = btn.closest('.row, tr, .form-group, [class*="to"]');
+      // In the compose form, To is the first recipient row
+      // Also check if this is NOT in a CC/BCC row
+      const label = row?.querySelector('label, .fieldLabel, td:first-child');
+      const labelText = label?.textContent?.toLowerCase() || '';
+      if (labelText.includes('cc') || labelText.includes('bcc')) continue;
+      btn.click();
+      removedAny = true;
+      console.log('[HW24 Provider] Step2: Clicked x to remove existing To recipient');
+    }
+
+    // Strategy 2: Clear via Select2 jQuery API
+    const $toSelect = _findSelectForField(container, jq, 'to');
+    if ($toSelect) {
+      if (!removedAny) {
+        $toSelect.val(null).trigger('change');
+        $toSelect.find('option').remove();
       }
+      // Add provider email
+      const opt = new Option(email, email, true, true);
+      $toSelect.append(opt).trigger('change');
+      $toSelect.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
+      console.log('[HW24 Provider] Step2: To set via Select2');
+      return;
     }
 
     // Fallback: native input
-    _setNativeInput(container, field, email);
+    _setNativeInput(container, 'to', email);
   }
 
-  function _addToField(container, jq, field, email) {
+  function _addEmailToField(container, jq, field, email) {
     console.log('[HW24 Provider] Step2: Adding', field, '=', email);
 
-    if (jq) {
-      const selectors = [
-        `select[name="${field}"]`, `select[name="${field}[]"]`,
-        `select[name="${field}emailids"]`, `select[name="${field}emailids[]"]`,
-        `select[id*="${field}"]`
-      ];
-      for (const sel of selectors) {
-        const $select = jq(container).find(sel);
-        if ($select.length) {
-          const opt = new Option(email, email, true, true);
-          $select.append(opt).trigger('change');
-          $select.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
-          console.log('[HW24 Provider] Step2:', field, 'added via Select2:', sel);
-          return;
-        }
-      }
+    const $select = _findSelectForField(container, jq, field);
+    if ($select) {
+      const opt = new Option(email, email, true, true);
+      $select.append(opt).trigger('change');
+      $select.trigger({ type: 'select2:select', params: { data: { id: email, text: email } } });
+      console.log('[HW24 Provider] Step2:', field, 'added via Select2');
+      return;
     }
 
     _setNativeInput(container, field, email);
@@ -571,8 +563,7 @@
   function _setNativeInput(container, field, email) {
     const inputSelectors = [
       `input[name="${field}"]`, `input[name="${field}[]"]`,
-      `input[name="${field}emailids"]`, `input[id*="${field}"]`,
-      `[data-fieldname="${field}"] input`
+      `input[name="${field}emailids"]`
     ];
     for (const sel of inputSelectors) {
       const input = container.querySelector(sel);
@@ -592,43 +583,19 @@
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE 7: STEP 2 — EMAIL BODY FILLING
      ═══════════════════════════════════════════════════════════════════════════
-     Template "Anfrage Händler" is loaded. We need to:
-     1. Replace greeting with provider-specific greeting
-     2. After greeting, insert intro line:
-        DE: "bitte um ein Angebot für folgende Anfrage:"
-        EN: "please provide a quote for the following request:"
-     3. Insert description text (from the cached detail-view description)
-     4. Adjust closing formula (Grüße + Vorname for PerDu)
-     5. Keep the signature intact
+     The template "Anfrage Händler" already generates:
+       - Greeting (with placeholder name)
+       - Intro line "bitte um ein Angebot für folgende Anfrage:"
+       - Description text (from template variable $potential_description$)
+       - Closing formula (Liebe Grüße / Mit freundlichen Grüßen)
+       - Signature (if "Include Signature" is checked)
+
+     So we only need to:
+       1. Click "Include Signature" (so signature + Vorname are available)
+       2. Replace greeting with provider-specific greeting
+       3. Insert description ONLY if the template doesn't already have it
+       4. Adjust closing formula (Grüße + Vorname for PerDu)
      ═══════════════════════════════════════════════════════════════════════════ */
-
-  function extractBodyStyle(html) {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    const candidates = tmp.querySelectorAll('p[style], span[style], div[style], font');
-    for (const el of candidates) {
-      if (el.textContent.trim().length < 5) continue;
-      const style = el.getAttribute('style') || '';
-      const tag = el.tagName.toLowerCase();
-      if (tag === 'font') {
-        return { tag: 'font', style, face: el.getAttribute('face') || '', size: el.getAttribute('size') || '', color: el.getAttribute('color') || '' };
-      }
-      if (style) return { tag, style, face: '', size: '', color: '' };
-    }
-    return null;
-  }
-
-  function wrapWithStyle(text, styleInfo) {
-    if (!styleInfo) return `<p>${text}</p>`;
-    if (styleInfo.tag === 'font') {
-      const attrs = [];
-      if (styleInfo.face) attrs.push(`face="${styleInfo.face}"`);
-      if (styleInfo.size) attrs.push(`size="${styleInfo.size}"`);
-      if (styleInfo.color) attrs.push(`color="${styleInfo.color}"`);
-      return `<p><font ${attrs.join(' ')}>${text}</font></p>`;
-    }
-    return `<p style="${styleInfo.style}">${text}</p>`;
-  }
 
   function replaceGreeting(html, provider) {
     const patterns = [
@@ -650,34 +617,11 @@
     return html;
   }
 
-  function descriptionToHTML(text, styleInfo) {
-    if (!text) return '';
-    const lines = text.split('\n');
-    const paragraphs = [];
-    let currentParagraph = [];
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed === '') {
-        if (currentParagraph.length > 0) {
-          paragraphs.push(wrapWithStyle(currentParagraph.join('<br>'), styleInfo));
-          currentParagraph = [];
-        }
-      } else {
-        currentParagraph.push(trimmed);
-      }
-    }
-    if (currentParagraph.length > 0) {
-      paragraphs.push(wrapWithStyle(currentParagraph.join('<br>'), styleInfo));
-    }
-
-    return paragraphs.join('');
-  }
-
   function extractUserFirstName(html) {
     const NOT_NAMES = ['Ihr', 'Dein', 'Das', 'Die', 'Der', 'Den', 'Dem', 'Ein', 'Eine', 'Mit',
       'Von', 'Und', 'Oder', 'Aber', 'Wenn', 'Wir', 'Uns', 'Unser', 'Service', 'Team', 'The',
-      'Your', 'Our', 'Best', 'Kind', 'Dear', 'Sent', 'From', 'Tel', 'Fax', 'Web', 'Mob'];
+      'Your', 'Our', 'Best', 'Kind', 'Dear', 'Sent', 'From', 'Tel', 'Fax', 'Web', 'Mob',
+      'Liebe', 'Viele'];
 
     const closingRe = /(?:Mit freundlichen Gr(?:ü|&uuml;)(?:ß|&szlig;|ss)en|Liebe Gr(?:ü|&uuml;)(?:ß|&szlig;|ss)e|Kind regards|Best regards)/i;
     const closingMatch = html.match(closingRe);
@@ -706,11 +650,46 @@
     return '';
   }
 
+  /**
+   * Click the "Include Signature" button to load the email signature.
+   * This must happen BEFORE we read the email body.
+   */
+  function clickIncludeSignature(container) {
+    // Look for "Include Signature" button/link
+    const allClickables = [...container.querySelectorAll('button, a, input[type="button"]')];
+    const sigBtn = allClickables.find(el => /include.*signature|signatur.*einf/i.test(el.textContent));
+    if (sigBtn) {
+      sigBtn.click();
+      console.log('[HW24 Provider] Clicked "Include Signature"');
+      return true;
+    }
+    console.log('[HW24 Provider] "Include Signature" button not found');
+    return false;
+  }
+
+  /**
+   * Check if the description text is already present in the email body.
+   * The template "Anfrage Händler" likely includes it via a template variable.
+   */
+  function descriptionAlreadyInBody(html, descText) {
+    if (!descText) return true; // nothing to insert
+    // Get the first significant line of the description (skip empty/short lines)
+    const lines = descText.split('\n').map(l => l.trim()).filter(l => l.length > 5);
+    if (lines.length === 0) return true;
+    // Strip HTML tags from body for text comparison
+    const plainBody = html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ');
+    // Check if the first line of description appears in the body
+    return plainBody.includes(lines[0]);
+  }
+
   async function fillEmailBody(provider) {
     const config = resolveProviderConfig(provider);
     console.log('[HW24 Provider] Filling email for', config.label, '| style:', config.style, '| lang:', config.lang);
 
-    await sleep(500);
+    // Step A: Click "Include Signature" to load signature into the editor
+    const composeContainer = findComposeContainer() || document.body;
+    clickIncludeSignature(composeContainer);
+    await sleep(800); // Wait for signature to be inserted into CKEditor
 
     let data = readEmailHTML();
     if (!data) {
@@ -725,79 +704,58 @@
 
     const { body, html } = data;
     let result = html;
+    console.log('[HW24 Provider] Email body length:', result.length);
 
-    // Extract the style from the template body so our inserted text matches
-    const styleInfo = extractBodyStyle(result);
-    console.log('[HW24 Provider] Body style:', styleInfo ? styleInfo.tag + ' ' + (styleInfo.style || styleInfo.face || '') : 'none');
-
-    // Extract user first name BEFORE any modifications
+    // Extract user first name from signature BEFORE modifications
     const userFirstName = extractUserFirstName(result);
 
-    // 1. Replace greeting
+    // 1. Replace greeting with provider-specific greeting
     result = replaceGreeting(result, config);
 
-    // 2. Build the content to insert: intro line + description
-    const introLine = config.lang === 'en'
-      ? 'please provide a quote for the following request:'
-      : 'bitte um ein Angebot für folgende Anfrage:';
-
-    let insertBlock = '';
-    // Intro line
-    insertBlock += wrapWithStyle(introLine, styleInfo);
-    // Blank line
-    insertBlock += wrapWithStyle('&nbsp;', styleInfo);
-    // Description text
-    if (pendingDescriptionText) {
-      insertBlock += descriptionToHTML(pendingDescriptionText, styleInfo);
-    }
-
-    // 3. Insert the block: after greeting paragraph, before closing formula
-    // Find the greeting in the result to insert after it
-    const greetingEndRe = new RegExp(
-      '(' + config.greeting.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')' +
-      '((?:<\\/[^>]*>)*(?:<br\\s*\\/?>|\\s)*(?:<\\/p>)?)',
-      'i'
-    );
-    const greetingMatch = result.match(greetingEndRe);
-    if (greetingMatch) {
-      const idx = result.indexOf(greetingMatch[0]) + greetingMatch[0].length;
-      const before = result.substring(0, idx);
-      const after = result.substring(idx);
-
-      // Remove any existing description text to avoid duplicates
-      // (the template might already include placeholder text — we replace it)
-      result = before + insertBlock + after;
-      console.log('[HW24 Provider] Content inserted after greeting');
+    // 2. Check if description text is already in the body (from template variable)
+    //    If yes → template handled it, don't insert again
+    //    If no → we need to insert it
+    const descAlready = descriptionAlreadyInBody(result, pendingDescriptionText);
+    if (descAlready) {
+      console.log('[HW24 Provider] Description already in template — skipping insertion');
     } else {
-      // Fallback: insert before closing formula
+      console.log('[HW24 Provider] Description NOT in template — inserting');
+      // Insert after greeting: intro line + description
+      const introLine = config.lang === 'en'
+        ? 'please provide a quote for the following request:'
+        : 'bitte um ein Angebot für folgende Anfrage:';
+
+      // Build a simple text block
+      let insertText = introLine + '\n\n' + pendingDescriptionText;
+      let insertHTML = '<p>' + insertText.split('\n').join('<br>') + '</p>';
+
+      // Try to insert after greeting
       const closingRe = /(<p[^>]*>(?:<[^>]*>)*\s*(?:Liebe Gr(?:ü|&uuml;)(?:ß|&szlig;|ss)e|Mit freundlichen Gr(?:ü|&uuml;)(?:ß|&szlig;|ss)en|Kind regards|Best regards)\b)/i;
       const closingMatch = result.match(closingRe);
       if (closingMatch) {
         const idx = result.indexOf(closingMatch[0]);
-        result = result.substring(0, idx) + insertBlock + result.substring(idx);
-        console.log('[HW24 Provider] Content inserted before closing formula');
+        result = result.substring(0, idx) + insertHTML + result.substring(idx);
       } else {
-        // Last resort: append before </body> or at end
-        result = result + insertBlock;
-        console.log('[HW24 Provider] Content appended at end');
+        result = result + insertHTML;
       }
     }
 
-    // 4. Apply closing formula (Grüße + Vorname for PerDu)
-    if (config.style === 'du' && userFirstName) {
-      if (config.lang === 'en') {
-        result = result.replace(/(Kind regards|Best regards)/i, `$1<br>${userFirstName}`);
-      } else {
-        // Replace MfG → Liebe Grüße if present
-        result = result.replace(/Mit freundlichen Gr(?:ü|&uuml;)(?:ß|&szlig;|ss)en/g, 'Liebe Grüße');
-        // Add Vorname after Liebe Grüße
-        result = result.replace(/(Liebe Gr(?:ü|&uuml;)(?:ß|&szlig;|ss)e)/g, `$1<br>${userFirstName}`);
-      }
-      console.log('[HW24 Provider] Closing formula adjusted, Vorname:', userFirstName);
-    } else if (config.style === 'du') {
-      // PerDu but no name found — still replace MfG → Liebe Grüße
+    // 3. Apply closing formula (Grüße + Vorname for PerDu)
+    if (config.style === 'du') {
+      // Replace MfG → Liebe Grüße
       result = result.replace(/Mit freundlichen Gr(?:ü|&uuml;)(?:ß|&szlig;|ss)en/g, 'Liebe Grüße');
-      console.log('[HW24 Provider] Closing formula: Liebe Grüße (no Vorname found)');
+      if (userFirstName) {
+        if (config.lang === 'en') {
+          // English: Kind regards + Vorname
+          result = result.replace(/(Kind regards|Best regards)/i, `$1<br>${userFirstName}`);
+        } else {
+          // German: Liebe Grüße + Vorname
+          result = result.replace(/(Liebe Gr(?:ü|&uuml;)(?:ß|&szlig;|ss)e)(?!<br>)/g, `$1<br>${userFirstName}`);
+        }
+        console.log('[HW24 Provider] Closing formula + Vorname:', userFirstName);
+      } else {
+        console.log('[HW24 Provider] Closing formula: Liebe Grüße (no Vorname found)');
+      }
     }
     // style === 'sie': keep "Mit freundlichen Grüßen", no extra Vorname
 
