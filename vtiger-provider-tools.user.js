@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.1
+// @version      1.5.2
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.1';
+  const HW24_VERSION = '1.5.2';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -800,6 +800,15 @@
 
     const toInput = _findEmailInput(container, 'to');
 
+    // Hard reset of likely To backing fields before Select2 operations
+    const toBackingInputs = container.querySelectorAll('input[type="hidden"], input[type="text"]');
+    for (const el of toBackingInputs) {
+      const key = (el.name || el.id || '').toLowerCase();
+      if (!/(^|_)(to|toemail|toemailids)(_|$)/.test(key)) continue;
+      el.value = '';
+      fire(el);
+    }
+
     // Strategy 1: Select2 v3.x jQuery API on the input
     if (toInput && jq) {
       const $input = jq(toInput);
@@ -812,6 +821,8 @@
           console.log('[HW24 Provider] Step2: Cleared To via select2("data", [])');
           // Set new email
           $input.select2('data', [{ id: email, text: email }]);
+          toInput.value = email;
+          fire(toInput);
           console.log('[HW24 Provider] Step2: To set to', email, 'via select2("data")');
           return;
         }
@@ -925,6 +936,31 @@
     }
 
     console.warn('[HW24 Provider] Step2: Could not add', field, '=', email);
+  }
+
+  async function ensureToRecipient(container, provider, maxAttempts = 3) {
+    const jq = window.jQuery || window.$;
+    const expectedTo = provider.to.toLowerCase();
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      _clearAndSetToField(container, jq, provider.to);
+      await sleep(900);
+
+      const toEmails = getToEmailsFromCompose(container);
+      const hasExpected = toEmails.includes(expectedTo);
+      const extras = toEmails.filter(e => e !== expectedTo);
+
+      console.log('[HW24 Provider] To verification attempt', attempt, {
+        expectedTo,
+        actualTo: toEmails
+      });
+
+      if (hasExpected && extras.length === 0) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   function extractEmails(text) {
@@ -1431,6 +1467,14 @@
       updateProviderEmailToolbarStatus('\u23F3 Empfänger werden gesetzt...');
       setComposeRecipients(container, config);
       await sleep(config.cc ? 1500 : 500);
+
+      // Hard verify To recipient and retry if needed
+      updateProviderEmailToolbarStatus('\u23F3 Empfänger werden verifiziert...');
+      const toOk = await ensureToRecipient(container, config, 4);
+      if (!toOk) {
+        const toEmails = getToEmailsFromCompose(container);
+        throw new Error('To-Empfänger konnte nicht sicher gesetzt werden. Erwartet: ' + config.to + ' | Aktuell: ' + (toEmails.join(', ') || '(leer)'));
+      }
 
       // Fill email body
       updateProviderEmailToolbarStatus('\u23F3 E-Mail wird befüllt...');
