@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.3
+// @version      1.5.4
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.3';
+  const HW24_VERSION = '1.5.4';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -1037,13 +1037,15 @@
       _clearAndSetToField(container, jq, provider.to);
       await sleep(900);
 
-      const toEmails = getToEmailsFromCompose(container);
-      const hasExpected = toEmails.includes(expectedTo);
-      const extras = toEmails.filter(e => e !== expectedTo);
+      const state = getToRecipientState(container);
+      const hasExpected = state.all.includes(expectedTo);
+      const extras = state.visible.filter(e => e !== expectedTo);
 
       console.log('[HW24 Provider] To verification attempt', attempt, {
         expectedTo,
-        actualTo: toEmails
+        visibleTo: state.visible,
+        backingTo: state.backing,
+        allTo: state.all
       });
 
       if (hasExpected && extras.length === 0) {
@@ -1069,19 +1071,20 @@
     return out;
   }
 
-  function getToEmailsFromCompose(container) {
+  function getToRecipientState(container) {
     const jq = window.jQuery || window.$;
-    const emails = new Set();
+    const visibleEmails = new Set();
+    const backingEmails = new Set();
 
     const toInput = _findEmailInput(container, 'to');
     if (toInput) {
-      extractEmails(toInput.value).forEach(e => emails.add(e));
+      extractEmails(toInput.value).forEach(e => backingEmails.add(e));
 
       const s2container = _findSelect2Container(toInput);
       if (s2container) {
         const tagTexts = s2container.querySelectorAll('.select2-search-choice div, .select2-chosen');
         for (const el of tagTexts) {
-          extractEmails(el.textContent).forEach(e => emails.add(e));
+          extractEmails(el.textContent).forEach(e => visibleEmails.add(e));
         }
       }
 
@@ -1090,22 +1093,27 @@
           const data = jq(toInput).select2('data') || [];
           const arr = Array.isArray(data) ? data : [data];
           for (const item of arr) {
-            extractEmails(item?.id || '').forEach(e => emails.add(e));
-            extractEmails(item?.text || '').forEach(e => emails.add(e));
+            extractEmails(item?.id || '').forEach(e => visibleEmails.add(e));
+            extractEmails(item?.text || '').forEach(e => visibleEmails.add(e));
           }
         } catch { /* select2 data not available */ }
       }
     }
 
-    // Additional safety: look for hidden inputs often used for submit values
+    // Additional safety: known backing fields for submit values
     const hiddenCandidates = container.querySelectorAll('input[type="hidden"], input[type="text"]');
     for (const el of hiddenCandidates) {
       const n = (el.name || el.id || '').toLowerCase();
-      if (!/(^|_)(to|toemail|toemailids)(_|$)/.test(n)) continue;
-      extractEmails(el.value).forEach(e => emails.add(e));
+      if (!/^(toemail|to_email|toemailids|to)$/.test(n)) continue;
+      extractEmails(el.value).forEach(e => backingEmails.add(e));
     }
 
-    return [...emails];
+    const allEmails = new Set([...visibleEmails, ...backingEmails]);
+    return {
+      visible: [...visibleEmails],
+      backing: [...backingEmails],
+      all: [...allEmails]
+    };
   }
 
   function isSendActionControl(el) {
@@ -1133,25 +1141,27 @@
       const expectedTo = container.__hw24ExpectedTo;
       if (!expectedTo) return true;
 
-      const toEmails = getToEmailsFromCompose(container);
-      const hasExpected = toEmails.includes(expectedTo);
-      const invalidExtras = toEmails.filter(e => e !== expectedTo);
+      const state = getToRecipientState(container);
+      const hasExpected = state.all.includes(expectedTo);
+      const visibleExtras = state.visible.filter(e => e !== expectedTo);
 
-      if (!hasExpected || invalidExtras.length > 0) {
+      if (!hasExpected || visibleExtras.length > 0) {
         event?.preventDefault?.();
         event?.stopPropagation?.();
         event?.stopImmediatePropagation?.();
 
         console.error('[HW24 Provider] SEND BLOCKED: recipient safety check failed', {
           expectedTo,
-          actualTo: toEmails,
+          visibleTo: state.visible,
+          backingTo: state.backing,
+          allTo: state.all,
           provider: container.__hw24ExpectedLabel
         });
 
         alert(
           'Senden wurde aus Sicherheitsgründen blockiert.\n\n' +
           'Erwarteter Empfänger (To): ' + expectedTo + '\n' +
-          'Gefundene Empfänger (To): ' + (toEmails.length ? toEmails.join(', ') : '(leer)') + '\n\n' +
+          'Gefundene Empfänger (To): ' + (state.all.length ? state.all.join(', ') : '(leer)') + '\n\n' +
           'Bitte To-Feld korrigieren und erneut senden.'
         );
         return false;
@@ -1159,7 +1169,9 @@
 
       console.log('[HW24 Provider] Recipient safety check passed', {
         expectedTo,
-        actualTo: toEmails
+        visibleTo: state.visible,
+        backingTo: state.backing,
+        allTo: state.all
       });
       return true;
     };
@@ -1567,8 +1579,8 @@
       updateProviderEmailToolbarStatus('\u23F3 Empfänger werden verifiziert...');
       const toOk = await ensureToRecipient(container, config, 4);
       if (!toOk) {
-        const toEmails = getToEmailsFromCompose(container);
-        throw new Error('To-Empfänger konnte nicht sicher gesetzt werden. Erwartet: ' + config.to + ' | Aktuell: ' + (toEmails.join(', ') || '(leer)'));
+        const state = getToRecipientState(container);
+        throw new Error('To-Empfänger konnte nicht sicher gesetzt werden. Erwartet: ' + config.to + ' | Aktuell: ' + (state.all.join(', ') || '(leer)'));
       }
 
       // Fill email body
