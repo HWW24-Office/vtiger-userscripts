@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.10
+// @version      2.7.11
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.10';
+  const HW24_VERSION = '2.7.11';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1244,6 +1244,58 @@
       }
     }
 
+    async function fetchTotalsFromEditRecord() {
+      const recordId = getRecordIdFromLocation();
+      if (!recordId || !currentModule) return null;
+
+      try {
+        const url = `index.php?module=${currentModule}&view=Edit&record=${recordId}`;
+        console.log('[HW24] Commission fallback: fetching edit record', { url, recordId, currentModule });
+        const r = await fetch(url, { credentials: 'same-origin' });
+        const html = await r.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const rows = [...doc.querySelectorAll('tr.lineItemRow[id^="row"], tr.inventoryRow')];
+        if (!rows.length) {
+          console.warn('[HW24] Commission fallback: no line item rows found in fetched edit HTML');
+          return null;
+        }
+
+        let sumPC = 0;
+        let sumSelling = 0;
+
+        rows.forEach((tr, idx) => {
+          const rn = tr.getAttribute('data-row-num') || tr.id?.replace('row', '') || String(idx + 1);
+          const qtyEl = tr.querySelector(`#qty${rn}, #quantity${rn}, input[name="qty${rn}"], input[name="quantity${rn}"]`);
+          const listEl = tr.querySelector(`#listPrice${rn}, input[name="listPrice${rn}"], #listPrice${rn}_display`);
+          const pcEl = tr.querySelector(`#purchaseCost${rn}, input[name="purchaseCost${rn}"], #purchaseCost${rn}_display`);
+          const qty = Math.max(1, parseInt(S(qtyEl?.value ?? qtyEl?.textContent), 10) || 1);
+          const listPrice = toNum(listEl?.value ?? listEl?.textContent);
+          const purchaseCost = toNum(pcEl?.value ?? pcEl?.textContent);
+          sumPC += purchaseCost * qty;
+          sumSelling += listPrice * qty;
+        });
+
+        const netTotalEl = doc.getElementById('netTotal') || doc.querySelector('[id$="_netTotal"]') || doc.querySelector('.netTotal');
+        const itemsTotal = netTotalEl ? toNum(netTotalEl.textContent || netTotalEl.value) : sumSelling;
+        const discountEl = doc.getElementById('discountTotal_final') || doc.querySelector('[id$="_discountTotal_final"]') || doc.querySelector('.discountTotal_final');
+        const overallDiscount = toNum(discountEl?.textContent || discountEl?.value);
+
+        console.log('[HW24] Commission fallback: parsed totals from edit HTML', {
+          rows: rows.length,
+          sumPC,
+          sumSelling,
+          itemsTotal,
+          overallDiscount
+        });
+
+        return buildTotals(sumPC, itemsTotal, overallDiscount);
+      } catch (e) {
+        console.error('[HW24] Commission fallback: edit fetch/parse failed', e);
+        return null;
+      }
+    }
+
     async function calculateTotalsWithFallback() {
       const localTotals = calculateTotals();
       console.log('[HW24] Commission calc: local totals', {
@@ -1262,9 +1314,15 @@
         return { ...fetchedTotals, _hw24Source: 'detail-fetch' };
       }
 
+      const fetchedEditTotals = await fetchTotalsFromEditRecord();
+      if (fetchedEditTotals && fetchedEditTotals.sumPC > 0) {
+        return { ...fetchedEditTotals, _hw24Source: 'edit-fetch' };
+      }
+
       console.warn('[HW24] Commission calc: local and fallback totals unavailable', {
         localSumPC: localTotals.sumPC,
-        fallbackSumPC: fetchedTotals?.sumPC ?? null
+        fallbackDetailSumPC: fetchedTotals?.sumPC ?? null,
+        fallbackEditSumPC: fetchedEditTotals?.sumPC ?? null
       });
       return { ...localTotals, _hw24Source: 'local-dom-empty' };
     }
