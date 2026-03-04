@@ -96,6 +96,9 @@
   let pendingType = null;            // 'provider' or 'dealer'
   let step1Handled = false;
 
+  // In-memory cache for status values (only valid during this page load, no stale data)
+  let _sessionStatusCache = {};  // { recordId: displayValue }
+
   // Per-provider "Sie" toggle: true = formal/Sie, false = du (default)
   // Each provider with hasSieToggle gets its own localStorage key
   function getSieToggle(providerKey) {
@@ -268,9 +271,8 @@
 
   /**
    * Read the current value of the status field.
-   * Tries DOM first (visible in current view), then localStorage cache.
-   * This ensures it works even when the field isn't in the current view's DOM
-   * (e.g. Summary view doesn't render the Provider Info field).
+   * Tries DOM first, then in-memory session cache (same page load only).
+   * Never uses localStorage for values — avoids stale data from previous sessions.
    */
   function _readCurrentStatus() {
     const fieldName = _detectStatusField();
@@ -279,40 +281,28 @@
 
     // Try DOM first
     const elements = _findStatusElements(fieldName);
-    if (elements.length > 0) {
-      // Field exists in DOM — trust DOM value, even if empty
-      for (const el of elements) {
-        const text = el.textContent.trim();
-        if (text) {
-          if (recordId) localStorage.setItem('hw24_provider_status_val_' + recordId, text);
-          return text;
-        }
-      }
-      // Field found but empty → genuinely empty, clear stale cache
-      if (recordId) localStorage.removeItem('hw24_provider_status_val_' + recordId);
-      return '';
+    for (const el of elements) {
+      const text = el.textContent.trim();
+      if (text) return text;
     }
 
-    // No elements in DOM (field not rendered in this view, e.g. Summary view)
-    // → fall back to localStorage cache
-    if (recordId) {
-      const cached = localStorage.getItem('hw24_provider_status_val_' + recordId);
-      if (cached) {
-        console.log('[HW24 Provider] Status value from cache:', cached);
-        return cached;
-      }
+    // Field not in DOM or empty — use in-memory session cache
+    // (only contains values saved during THIS page load)
+    if (recordId && _sessionStatusCache[recordId]) {
+      console.log('[HW24 Provider] Status value from session cache:', _sessionStatusCache[recordId]);
+      return _sessionStatusCache[recordId];
     }
 
     return '';
   }
 
   /**
-   * Cache the saved status value for this record (localStorage + DOM update).
+   * Cache the saved status value in memory (session only, not localStorage).
    */
   function _cacheStatusValue(newValue) {
     const recordId = _getRecordId();
     const displayValue = newValue.replace(/\s*\|##\|\s*/g, ', ');
-    if (recordId) localStorage.setItem('hw24_provider_status_val_' + recordId, displayValue);
+    if (recordId) _sessionStatusCache[recordId] = displayValue;
   }
 
   /**
