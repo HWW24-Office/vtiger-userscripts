@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.0
+// @version      1.5.1
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.0';
+  const HW24_VERSION = '1.5.1';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -927,6 +927,133 @@
     console.warn('[HW24 Provider] Step2: Could not add', field, '=', email);
   }
 
+  function extractEmails(text) {
+    if (!text) return [];
+    const matches = String(text).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+    const seen = new Set();
+    const out = [];
+    for (const m of matches) {
+      const e = m.trim().toLowerCase();
+      if (!seen.has(e)) {
+        seen.add(e);
+        out.push(e);
+      }
+    }
+    return out;
+  }
+
+  function getToEmailsFromCompose(container) {
+    const jq = window.jQuery || window.$;
+    const emails = new Set();
+
+    const toInput = _findEmailInput(container, 'to');
+    if (toInput) {
+      extractEmails(toInput.value).forEach(e => emails.add(e));
+
+      const s2container = _findSelect2Container(toInput);
+      if (s2container) {
+        const tagTexts = s2container.querySelectorAll('.select2-search-choice div, .select2-chosen');
+        for (const el of tagTexts) {
+          extractEmails(el.textContent).forEach(e => emails.add(e));
+        }
+      }
+
+      if (jq) {
+        try {
+          const data = jq(toInput).select2('data') || [];
+          const arr = Array.isArray(data) ? data : [data];
+          for (const item of arr) {
+            extractEmails(item?.id || '').forEach(e => emails.add(e));
+            extractEmails(item?.text || '').forEach(e => emails.add(e));
+          }
+        } catch { /* select2 data not available */ }
+      }
+    }
+
+    // Additional safety: look for hidden inputs often used for submit values
+    const hiddenCandidates = container.querySelectorAll('input[type="hidden"], input[type="text"]');
+    for (const el of hiddenCandidates) {
+      const n = (el.name || el.id || '').toLowerCase();
+      if (!/(^|_)(to|toemail|toemailids)(_|$)/.test(n)) continue;
+      extractEmails(el.value).forEach(e => emails.add(e));
+    }
+
+    return [...emails];
+  }
+
+  function isSendActionControl(el) {
+    if (!el) return false;
+    const ctrl = el.closest('button, input[type="submit"], input[type="button"], a.btn, a');
+    if (!ctrl) return false;
+    const text = (ctrl.textContent || ctrl.value || ctrl.getAttribute('title') || '').toLowerCase().trim();
+    if (!text) return false;
+    if (!/\b(send|senden)\b/.test(text)) return false;
+    if (/compose|emailmaker|template|weiter|next|abbrechen|cancel|close|schlie/.test(text)) return false;
+    return true;
+  }
+
+  function installSendSafetyGuard(container, provider) {
+    if (!container || !provider?.to) return;
+
+    // Keep expected recipient up-to-date for this compose instance
+    container.__hw24ExpectedTo = provider.to.toLowerCase();
+    container.__hw24ExpectedLabel = provider.label || provider.to;
+
+    if (container.__hw24SendGuardInstalled) return;
+    container.__hw24SendGuardInstalled = true;
+
+    const validateAndBlockIfNeeded = (event) => {
+      const expectedTo = container.__hw24ExpectedTo;
+      if (!expectedTo) return true;
+
+      const toEmails = getToEmailsFromCompose(container);
+      const hasExpected = toEmails.includes(expectedTo);
+      const invalidExtras = toEmails.filter(e => e !== expectedTo);
+
+      if (!hasExpected || invalidExtras.length > 0) {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        event?.stopImmediatePropagation?.();
+
+        console.error('[HW24 Provider] SEND BLOCKED: recipient safety check failed', {
+          expectedTo,
+          actualTo: toEmails,
+          provider: container.__hw24ExpectedLabel
+        });
+
+        alert(
+          'Senden wurde aus Sicherheitsgründen blockiert.\n\n' +
+          'Erwarteter Empfänger (To): ' + expectedTo + '\n' +
+          'Gefundene Empfänger (To): ' + (toEmails.length ? toEmails.join(', ') : '(leer)') + '\n\n' +
+          'Bitte To-Feld korrigieren und erneut senden.'
+        );
+        return false;
+      }
+
+      console.log('[HW24 Provider] Recipient safety check passed', {
+        expectedTo,
+        actualTo: toEmails
+      });
+      return true;
+    };
+
+    // Guard click on send buttons/links (capture phase to run first)
+    container.addEventListener('click', (e) => {
+      if (!isSendActionControl(e.target)) return;
+      validateAndBlockIfNeeded(e);
+    }, true);
+
+    // Guard form submit as second line of defense
+    const forms = container.querySelectorAll('form');
+    forms.forEach(form => {
+      form.addEventListener('submit', (e) => {
+        validateAndBlockIfNeeded(e);
+      }, true);
+    });
+
+    console.log('[HW24 Provider] Send safety guard installed for expected To:', container.__hw24ExpectedTo);
+  }
+
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE 7: STEP 2 — EMAIL BODY FILLING
      ═══════════════════════════════════════════════════════════════════════════
@@ -1285,6 +1412,7 @@
     console.log('[HW24 Provider] Step 2 compose popup detected for:', provider.label);
 
     injectProviderEmailToolbar(container, config);
+    installSendSafetyGuard(container, config);
 
     try {
       // Wait for CKEditor content to load
