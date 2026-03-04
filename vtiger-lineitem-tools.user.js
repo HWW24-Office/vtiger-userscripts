@@ -1704,7 +1704,8 @@
       const reverseCharge = getReverseCharge();
       const nichtSteuerbar = getNichtSteuerbar();
       const subjectType = getSubjectType();
-      const vatNumber = await fetchOrganizationVAT();
+      const isPurchaseOrderModule = currentModule === 'PurchaseOrder';
+      const vatNumber = isPurchaseOrderModule ? '' : await fetchOrganizationVAT();
       const hasVAT = vatNumber.length > 0;
 
       const issues = [];
@@ -1751,62 +1752,92 @@
       }
 
       // ═══════════════════════════════════════════════════════════════
-      // REGEL 2: EU (inkl. DE) MIT UID → EU Tax Region, RC aktivieren
+      // REGEL 2: DE/EU
+      // PurchaseOrder: UID ist irrelevant → immer EU + RC aktiv
+      // Andere Module: mit UID → EU + RC aktiv, ohne UID → Austria + kein RC
       // ═══════════════════════════════════════════════════════════════
-      else if ((billingIsGermany || billingIsEU) && hasVAT) {
-        if (!isEUTaxRegion && taxRegion) {
-          issues.push({
-            type: 'error',
-            message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Tax Region muss "EU" sein, nicht "${taxRegion}".`,
-            fix: () => setTaxRegion('EU'),
-            fixLabel: 'Tax Region → EU'
-          });
+      else if (billingIsGermany || billingIsEU) {
+        if (isPurchaseOrderModule) {
+          if (!isEUTaxRegion && taxRegion) {
+            issues.push({
+              type: 'error',
+              message: `⚠️ Purchase Order (DE/EU) → Tax Region muss "EU" sein, nicht "${taxRegion}".`,
+              fix: () => setTaxRegion('EU'),
+              fixLabel: 'Tax Region → EU'
+            });
+          }
+          if (!reverseCharge) {
+            issues.push({
+              type: 'error',
+              message: '⚠️ Purchase Order (DE/EU) → Reverse Charge muss aktiviert sein (UID irrelevant).',
+              fix: () => setReverseCharge(true),
+              fixLabel: 'RC aktivieren'
+            });
+          }
+          if (nichtSteuerbar) {
+            issues.push({
+              type: 'error',
+              message: '⚠️ "Nicht steuerbar" darf bei Purchase Order (DE/EU) nicht aktiviert sein.',
+              fix: () => setNichtSteuerbar(false),
+              fixLabel: 'Nicht steuerbar deaktivieren'
+            });
+          }
         }
-        if (!reverseCharge) {
-          issues.push({
-            type: 'error',
-            message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Reverse Charge muss aktiviert sein.`,
-            fix: () => setReverseCharge(true),
-            fixLabel: 'RC aktivieren'
-          });
-        }
-        if (nichtSteuerbar) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden mit UID nicht aktiviert sein.',
-            fix: () => setNichtSteuerbar(false),
-            fixLabel: 'Nicht steuerbar deaktivieren'
-          });
-        }
-      }
 
-      // ═══════════════════════════════════════════════════════════════
-      // REGEL 3: EU (inkl. DE) OHNE UID → 20% (Austria), kein RC
-      // ═══════════════════════════════════════════════════════════════
-      else if ((billingIsGermany || billingIsEU) && !hasVAT) {
-        if (!isAustriaTaxRegion && taxRegion) {
-          issues.push({
-            type: 'error',
-            message: `⚠️ EU-Kunde ohne UID → Tax Region muss "Austria" (20%) sein, nicht "${taxRegion}".`,
-            fix: () => setTaxRegion('Austria'),
-            fixLabel: 'Tax Region → Austria'
-          });
+        // MIT UID → EU Tax Region, RC aktivieren
+        else if (hasVAT) {
+          if (!isEUTaxRegion && taxRegion) {
+            issues.push({
+              type: 'error',
+              message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Tax Region muss "EU" sein, nicht "${taxRegion}".`,
+              fix: () => setTaxRegion('EU'),
+              fixLabel: 'Tax Region → EU'
+            });
+          }
+          if (!reverseCharge) {
+            issues.push({
+              type: 'error',
+              message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Reverse Charge muss aktiviert sein.`,
+              fix: () => setReverseCharge(true),
+              fixLabel: 'RC aktivieren'
+            });
+          }
+          if (nichtSteuerbar) {
+            issues.push({
+              type: 'error',
+              message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden mit UID nicht aktiviert sein.',
+              fix: () => setNichtSteuerbar(false),
+              fixLabel: 'Nicht steuerbar deaktivieren'
+            });
+          }
         }
-        if (reverseCharge) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ Reverse Charge darf bei EU-Kunden ohne UID nicht aktiviert sein.',
-            fix: () => setReverseCharge(false),
-            fixLabel: 'RC deaktivieren'
-          });
-        }
-        if (nichtSteuerbar) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden ohne UID nicht aktiviert sein.',
-            fix: () => setNichtSteuerbar(false),
-            fixLabel: 'Nicht steuerbar deaktivieren'
-          });
+
+        // OHNE UID → 20% (Austria), kein RC
+        else {
+          if (!isAustriaTaxRegion && taxRegion) {
+            issues.push({
+              type: 'error',
+              message: `⚠️ EU-Kunde ohne UID → Tax Region muss "Austria" (20%) sein, nicht "${taxRegion}".`,
+              fix: () => setTaxRegion('Austria'),
+              fixLabel: 'Tax Region → Austria'
+            });
+          }
+          if (reverseCharge) {
+            issues.push({
+              type: 'error',
+              message: '⚠️ Reverse Charge darf bei EU-Kunden ohne UID nicht aktiviert sein.',
+              fix: () => setReverseCharge(false),
+              fixLabel: 'RC deaktivieren'
+            });
+          }
+          if (nichtSteuerbar) {
+            issues.push({
+              type: 'error',
+              message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden ohne UID nicht aktiviert sein.',
+              fix: () => setNichtSteuerbar(false),
+              fixLabel: 'Nicht steuerbar deaktivieren'
+            });
+          }
         }
       }
 
