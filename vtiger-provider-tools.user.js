@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.2
+// @version      1.5.3
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.2';
+  const HW24_VERSION = '1.5.3';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -422,11 +422,11 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 4: STEP 1 POPUP — TEMPLATE + LANGUAGE ONLY
+     MODULE 4: STEP 1 POPUP — TEMPLATE + LANGUAGE + RECIPIENT RESET
      ═══════════════════════════════════════════════════════════════════════════
      The first popup has: To, CC, BCC, Template selector, Language selector.
-     We ONLY set the template and language here.
-     To/CC will be handled in Step 2 (compose popup).
+     We now clear customer recipients already in Step 1 and prefill provider To.
+     Step 2 still re-applies recipients and verifies them.
      ═══════════════════════════════════════════════════════════════════════════ */
 
   function findStep1Container() {
@@ -540,6 +540,97 @@
       }
     }
     console.log('[HW24 Provider] Step1: Language selector not found');
+  }
+
+  function setRecipientsInStep1(container, provider) {
+    console.log('[HW24 Provider] Step1: Clearing recipients and prefilling provider To');
+
+    const jq = window.jQuery || window.$;
+    const toLower = (provider?.to || '').toLowerCase();
+    const ccLower = (provider?.cc || '').toLowerCase();
+
+    const isToKey = (key) => /(^|_)(to|toemail|toemailids|to_email|emailfield)(_|$)/.test(key) && !/(cc|bcc)/.test(key);
+    const isCcKey = (key) => /(^|_)(cc|ccemail|ccemailids|cc_email|ccemailfield)(_|$)/.test(key);
+    const isBccKey = (key) => /(^|_)(bcc|bccemail|bccemailids|bcc_email|bccemailfield)(_|$)/.test(key);
+
+    // 1) Clear recipient selects in Step 1
+    const selects = container.querySelectorAll('select');
+    for (const sel of selects) {
+      const key = ((sel.name || '') + ' ' + (sel.id || '')).toLowerCase();
+      const recipientSelect = isToKey(key) || isCcKey(key) || isBccKey(key);
+      if (!recipientSelect) continue;
+      if (sel.multiple) {
+        [...sel.options].forEach(o => { o.selected = false; });
+      } else {
+        sel.value = '';
+      }
+      fire(sel);
+      if (jq) {
+        try { jq(sel).val(sel.multiple ? [] : '').trigger('change'); } catch { /* ignore */ }
+      }
+    }
+
+    // 2) Clear recipient inputs in Step 1
+    const inputs = container.querySelectorAll('input[type="hidden"], input[type="text"], input:not([type])');
+    const toCandidates = [];
+    const ccCandidates = [];
+    for (const input of inputs) {
+      const key = ((input.name || '') + ' ' + (input.id || '')).toLowerCase();
+      if (isToKey(key)) {
+        input.value = '';
+        fire(input);
+        toCandidates.push(input);
+      } else if (isCcKey(key) || isBccKey(key)) {
+        input.value = '';
+        fire(input);
+        ccCandidates.push(input);
+      }
+    }
+
+    // 3) Remove visible Select2 recipient tags if present
+    const closeButtons = container.querySelectorAll('.select2-search-choice-close');
+    for (const btn of closeButtons) {
+      btn.click();
+    }
+
+    // 4) Prefill To with provider email
+    for (const input of toCandidates) {
+      input.value = provider.to;
+      fire(input);
+      if (jq) {
+        try {
+          const $input = jq(input);
+          if ($input.data('select2')) {
+            $input.select2('data', [{ id: provider.to, text: provider.to }]);
+          } else {
+            $input.val(provider.to).trigger('change');
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
+    // 5) Prefill CC if configured; otherwise keep CC empty
+    for (const input of ccCandidates) {
+      input.value = ccLower ? provider.cc : '';
+      fire(input);
+      if (jq) {
+        try {
+          const $input = jq(input);
+          if ($input.data('select2')) {
+            $input.select2('data', ccLower ? [{ id: provider.cc, text: provider.cc }] : []);
+          } else {
+            $input.val(ccLower ? provider.cc : '').trigger('change');
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
+    console.log('[HW24 Provider] Step1: Recipient reset/prefill complete', {
+      expectedTo: toLower,
+      expectedCc: ccLower || '(none)',
+      toCandidates: toCandidates.length,
+      ccOrBccCandidates: ccCandidates.length
+    });
   }
 
   function clickStep1ComposeButton(container) {
@@ -1428,6 +1519,10 @@
 
       // Set language
       setLanguageInStep1(container, config.lang);
+      await sleep(300);
+
+      // Safety-critical: clear end-customer recipients already in Step 1
+      setRecipientsInStep1(container, config);
       await sleep(300);
 
       // Click "Compose Email" to proceed to Step 2
