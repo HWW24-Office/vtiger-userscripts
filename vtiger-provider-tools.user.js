@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.5
+// @version      1.5.6
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.5';
+  const HW24_VERSION = '1.5.6';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -891,15 +891,6 @@
 
     const toInput = _findEmailInput(container, 'to');
 
-    // Hard reset of likely To backing fields before Select2 operations
-    const toBackingInputs = container.querySelectorAll('input[type="hidden"], input[type="text"]');
-    for (const el of toBackingInputs) {
-      const key = (el.name || el.id || '').toLowerCase();
-      if (!/(^|_)(to|toemail|toemailids)(_|$)/.test(key)) continue;
-      el.value = '';
-      fire(el);
-    }
-
     // Strategy 1: Select2 v3.x jQuery API on the input
     if (toInput && jq) {
       const $input = jq(toInput);
@@ -912,8 +903,6 @@
           console.log('[HW24 Provider] Step2: Cleared To via select2("data", [])');
           // Set new email
           $input.select2('data', [{ id: email, text: email }]);
-          toInput.value = email;
-          fire(toInput);
           console.log('[HW24 Provider] Step2: To set to', email, 'via select2("data")');
           return;
         }
@@ -1129,36 +1118,6 @@
     };
   }
 
-  function forceSetToBeforeSend(container, expectedTo) {
-    const jq = window.jQuery || window.$;
-    const toInput = _findEmailInput(container, 'to');
-
-    if (toInput) {
-      try {
-        toInput.value = expectedTo;
-        fire(toInput);
-        if (jq) {
-          const $input = jq(toInput);
-          if ($input.data('select2')) {
-            $input.select2('data', [{ id: expectedTo, text: expectedTo }]);
-          } else {
-            $input.val(expectedTo).trigger('change');
-          }
-        }
-      } catch (e) {
-        console.warn('[HW24 Provider] Pre-send To force-set failed on main input:', e?.message || e);
-      }
-    }
-
-    const rawCandidates = container.querySelectorAll('input[type="hidden"], input[type="text"]');
-    for (const el of rawCandidates) {
-      const n = (el.name || el.id || '').toLowerCase();
-      if (!/^(toemail|to_email|toemailids|to)$/.test(n)) continue;
-      el.value = expectedTo;
-      fire(el);
-    }
-  }
-
   function isSendActionControl(el) {
     if (!el) return false;
     const ctrl = el.closest('button, input[type="submit"], input[type="button"], a.btn, a');
@@ -1184,15 +1143,11 @@
       const expectedTo = container.__hw24ExpectedTo;
       if (!expectedTo) return true;
 
-      let state = getToRecipientState(container);
-      let hasExpected = state.all.includes(expectedTo) || state.raw.some(v => v.includes(expectedTo));
-
-      if (!hasExpected) {
-        forceSetToBeforeSend(container, expectedTo);
-        state = getToRecipientState(container);
-        hasExpected = state.all.includes(expectedTo) || state.raw.some(v => v.includes(expectedTo));
-      }
-
+      const state = getToRecipientState(container);
+      const hasVisible = state.visible.length > 0;
+      const hasExpected = hasVisible
+        ? state.visible.includes(expectedTo)
+        : (state.all.includes(expectedTo) || state.raw.some(v => v.includes(expectedTo)));
       const visibleExtras = state.visible.filter(e => e !== expectedTo);
 
       if (!hasExpected || visibleExtras.length > 0) {
