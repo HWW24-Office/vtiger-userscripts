@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.4.1
+// @version      1.5.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.4.1';
+  const HW24_VERSION = '1.5.0';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -60,16 +60,16 @@
      ═══════════════════════════════════════════════════════════════════════════ */
 
   const PROVIDERS = [
-    { key: 'TG',    label: 'Evernex',    to: 'R.Voelzke@technogroup.com',  cc: '',                               greeting: 'Hallo Ronny,',       style: 'du',  lang: 'de', status: 'angefragt TG' },
-    { key: 'CC',    label: 'Axians',     to: 'Michael.kienzle@axians.de',  cc: 'niklas.spranz@axians.de',        greeting: 'Hallo Michael,',     style: 'du',  lang: 'de', status: 'angefragt CC',
+    { key: 'TG',    label: 'Evernex',    to: 'R.Voelzke@technogroup.com',  cc: '',                               greeting: 'Hallo Ronny,',       style: 'du',  lang: 'de' },
+    { key: 'CC',    label: 'Axians',     to: 'Michael.kienzle@axians.de',  cc: 'niklas.spranz@axians.de',        greeting: 'Hallo Michael,',     style: 'du',  lang: 'de',
                                                                                                                    greetingSie: 'Hallo Herr Kienzle,', hasSieToggle: true },
-    { key: 'PP',    label: 'Park Place', to: 'jchiaju@parkplacetech.com',  cc: 'partnersales@parkplacetech.com', greeting: 'Hallo Justine,',     style: 'du',  lang: 'de', status: 'angefragt PP' },
-    { key: 'ITRIS', label: 'ITRIS',      to: 'kkroner@itris.de',           cc: '',                               greeting: 'Hallo Katrin,',      style: 'du',  lang: 'de', status: 'angefragt ITRIS' },
-    { key: 'DIS',   label: 'DIS',        to: 'anfragen@dis-daten-it.de',   cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de', status: 'angefragt DIS',
+    { key: 'PP',    label: 'Park Place', to: 'jchiaju@parkplacetech.com',  cc: 'partnersales@parkplacetech.com', greeting: 'Hallo Justine,',     style: 'du',  lang: 'de' },
+    { key: 'ITRIS', label: 'ITRIS',      to: 'kkroner@itris.de',           cc: '',                               greeting: 'Hallo Katrin,',      style: 'du',  lang: 'de' },
+    { key: 'DIS',   label: 'DIS',        to: 'anfragen@dis-daten-it.de',   cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de',
                                                                                                                    greetingSie: 'Hallo Team,', hasSieToggle: true },
-    { key: 'IDS',   label: 'IDS',        to: 'o.hermann@idsgmbh.com',      cc: '',                               greeting: 'Hallo Olga,',        style: 'du',  lang: 'de', status: 'angefragt IDS' },
-    { key: 'Nordic', label: 'Nordic',    to: 'ksp@nordiccomputer.com',     cc: '',                               greeting: 'Hello Kevon,',       style: 'du',  lang: 'en', status: 'angefragt Nordic' },
-    { key: 'TDS',   label: 'TD Synnex',  to: 'Sales.at@tdsynnex.com',      cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de', status: 'angefragt TD Synnex',
+    { key: 'IDS',   label: 'IDS',        to: 'o.hermann@idsgmbh.com',      cc: '',                               greeting: 'Hallo Olga,',        style: 'du',  lang: 'de' },
+    { key: 'Nordic', label: 'Nordic',    to: 'ksp@nordiccomputer.com',     cc: '',                               greeting: 'Hello Kevon,',       style: 'du',  lang: 'en' },
+    { key: 'TDS',   label: 'TD Synnex',  to: 'Sales.at@tdsynnex.com',      cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de',
                                                                                                                    greetingSie: 'Hallo Team,', hasSieToggle: true },
   ];
 
@@ -95,9 +95,6 @@
   let pendingDescriptionText = '';  // cached from detail view before popup opens
   let pendingType = null;            // 'provider' or 'dealer'
   let step1Handled = false;
-
-  // In-memory cache for status values (only valid during this page load, no stale data)
-  let _sessionStatusCache = {};  // { recordId: displayValue }
 
   // Per-provider "Sie" toggle: true = formal/Sie, false = du (default)
   // Each provider with hasSieToggle gets its own localStorage key
@@ -180,297 +177,33 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 1b: PROVIDER STATUS — AUTO-UPDATE VIA SAVEAJAX
+     MODULE 1b: RECORD COMMENT — POST VIA ModComments SaveAjax
      ═══════════════════════════════════════════════════════════════════════════
-     Each provider has a `status` value like "angefragt TG".
-     This is written to a picklist/multipicklist field on the Potentials record.
-     The field is auto-detected by scanning for known status values.
-     VTiger multipicklist separator: " |##| "
+     Both providers and dealers post a comment on the Potentials record
+     to document who was contacted.
      ═══════════════════════════════════════════════════════════════════════════ */
-
-  // Cache the detected field name (memory + localStorage for cross-view persistence)
-  let _statusFieldName = null;
 
   function _getRecordId() {
     return (location.href.match(/record=(\d+)/) || [])[1] || '';
   }
 
-  /**
-   * Auto-detect the provider status field on the page.
-   * Works in both Summary view and Detail view.
-   * Caches field name in localStorage so it survives view switches.
-   */
-  function _detectStatusField() {
-    if (_statusFieldName) return _statusFieldName;
-
-    // Strategy 0: Read from localStorage cache (persists across Summary/Detail switch)
-    const cached = localStorage.getItem('hw24_provider_status_fieldname');
-    if (cached) {
-      _statusFieldName = cached;
-      console.log('[HW24 Provider] Status field from cache:', _statusFieldName);
-      return _statusFieldName;
-    }
-
-    // Strategy 1: Search ALL fieldValue elements for "angefragt" text
-    const allValues = document.querySelectorAll('[id*="fieldValue_"]');
-    for (const el of allValues) {
-      const text = el.textContent.trim();
-      if (/angefragt|angeboten|beauftragt/i.test(text)) {
-        const match = el.id.match(/fieldValue_(.+)$/);
-        if (match) {
-          _statusFieldName = match[1];
-          localStorage.setItem('hw24_provider_status_fieldname', _statusFieldName);
-          console.log('[HW24 Provider] Status field detected:', _statusFieldName, 'from:', el.id);
-          return _statusFieldName;
-        }
-      }
-    }
-
-    // Strategy 2: Search ALL fieldLabel elements for provider/status keywords
-    const allLabels = document.querySelectorAll('[id*="fieldLabel_"]');
-    for (const lbl of allLabels) {
-      const text = lbl.textContent.trim().toLowerCase();
-      if (/provider.*status|status.*provider|anfrage.*status|provider.*info|lieferant/i.test(text)) {
-        const fieldName = lbl.id.match(/fieldLabel_(.+)$/)?.[1];
-        if (fieldName) {
-          _statusFieldName = fieldName;
-          localStorage.setItem('hw24_provider_status_fieldname', _statusFieldName);
-          console.log('[HW24 Provider] Status field via label:', _statusFieldName, 'from:', lbl.id);
-          return _statusFieldName;
-        }
-      }
-    }
-
-    // Strategy 3: data-field-name attributes
-    const classValues = document.querySelectorAll('.fieldValue, .value, [data-field-name]');
-    for (const el of classValues) {
-      if (/angefragt|angeboten|beauftragt/i.test(el.textContent.trim())) {
-        const dataField = el.dataset?.fieldName || el.dataset?.name;
-        if (dataField) {
-          _statusFieldName = dataField;
-          localStorage.setItem('hw24_provider_status_fieldname', _statusFieldName);
-          console.log('[HW24 Provider] Status field via data-attribute:', _statusFieldName);
-          return _statusFieldName;
-        }
-      }
-    }
-
-    console.warn('[HW24 Provider] Could not auto-detect status field');
-    return null;
-  }
-
-  /**
-   * Find ALL status field value elements on the page (Summary + Detail view).
-   */
-  function _findStatusElements(fieldName) {
-    return document.querySelectorAll(
-      '[id*="fieldValue_' + fieldName + '"], ' +
-      '[data-field-name="' + fieldName + '"]'
-    );
-  }
-
-  /**
-   * Read the current value of the status field.
-   * Tries DOM first, then in-memory session cache (same page load only).
-   * Never uses localStorage for values — avoids stale data from previous sessions.
-   */
-  function _readCurrentStatus() {
-    const fieldName = _detectStatusField();
-    if (!fieldName) return '';
-    const recordId = _getRecordId();
-
-    // Try DOM first
-    const elements = _findStatusElements(fieldName);
-    for (const el of elements) {
-      const text = el.textContent.trim();
-      if (text) return text;
-    }
-
-    // Field not in DOM or empty — use in-memory session cache
-    // (only contains values saved during THIS page load)
-    if (recordId && _sessionStatusCache[recordId]) {
-      console.log('[HW24 Provider] Status value from session cache:', _sessionStatusCache[recordId]);
-      return _sessionStatusCache[recordId];
-    }
-
-    return '';
-  }
-
-  /**
-   * Cache the saved status value in memory (session only, not localStorage).
-   */
-  function _cacheStatusValue(newValue) {
-    const recordId = _getRecordId();
-    const displayValue = newValue.replace(/\s*\|##\|\s*/g, ', ');
-    if (recordId) _sessionStatusCache[recordId] = displayValue;
-  }
-
-  /**
-   * Get VTiger CSRF token (required for SaveAjax).
-   */
   function _getCsrfToken() {
-    // Strategy 1: Global variable set by VTiger
     if (typeof csrfMagicToken !== 'undefined') return csrfMagicToken;
-    // Strategy 2: Hidden input in DOM
     const input = document.querySelector('input[name="__vtrftk"]');
     if (input) return input.value;
-    // Strategy 3: Meta tag
     const meta = document.querySelector('meta[name="__vtrftk"], meta[name="csrf-token"]');
     if (meta) return meta.content;
     return '';
   }
 
-  /**
-   * Set the provider status on the Potentials record via VTiger SaveAjax.
-   * Uses VTiger's AppConnector (preferred) or jQuery.ajax with CSRF token.
-   */
-  async function setProviderStatus(statusValue) {
+  async function postRecordComment(commentText) {
     const recordId = _getRecordId();
     if (!recordId) {
-      console.warn('[HW24 Provider] Record ID not found — cannot set status');
+      console.warn('[HW24] Record ID not found — cannot post comment');
       return false;
     }
 
-    const fieldName = _detectStatusField();
-    if (!fieldName) {
-      console.warn('[HW24 Provider] Status field not detected — cannot set status');
-      return false;
-    }
-
-    // Build new value — always treat as multipicklist (append, never replace)
-    let newValue = statusValue;
-    const currentValue = _readCurrentStatus();
-
-    if (currentValue) {
-      // Split on VTiger separator " |##| " or comma (display format)
-      const existing = currentValue.includes('|##|')
-        ? currentValue.split(/\s*\|##\|\s*/)
-        : currentValue.split(/\s*,\s*/);
-      // Only add if not already present
-      if (!existing.includes(statusValue)) {
-        existing.push(statusValue);
-      }
-      newValue = existing.join(' |##| ');
-    }
-
-    console.log('[HW24 Provider] Setting status field', fieldName, '=', newValue);
-
-    const saveParams = {
-      module: 'Potentials',
-      action: 'SaveAjax',
-      record: recordId,
-      field: fieldName,
-      value: newValue
-    };
-
-    // Strategy 1: VTiger's built-in AppConnector (handles CSRF automatically)
-    if (typeof AppConnector !== 'undefined' && AppConnector.request) {
-      try {
-        const result = await new Promise((resolve, reject) => {
-          AppConnector.request(saveParams).then(resolve, reject);
-        });
-        console.log('[HW24 Provider] Status saved via AppConnector:', result);
-        _updateStatusUI(fieldName, newValue);
-        return true;
-      } catch (e) {
-        console.log('[HW24 Provider] AppConnector failed:', e, '— trying jQuery');
-      }
-    }
-
-    // Strategy 2: VTiger's app.request (some VTiger versions)
-    if (typeof app !== 'undefined' && app.request && app.request.post) {
-      try {
-        const result = await app.request.post({ data: saveParams });
-        console.log('[HW24 Provider] Status saved via app.request:', result);
-        _updateStatusUI(fieldName, newValue);
-        return true;
-      } catch (e) {
-        console.log('[HW24 Provider] app.request failed:', e, '— trying jQuery');
-      }
-    }
-
-    // Strategy 3: jQuery AJAX with CSRF token
-    const jq = window.jQuery || window.$;
-    const csrfToken = _getCsrfToken();
-    if (jq) {
-      const ajaxParams = { ...saveParams };
-      if (csrfToken) ajaxParams.__vtrftk = csrfToken;
-      try {
-        const result = await new Promise((resolve, reject) => {
-          jq.ajax({
-            url: 'index.php',
-            type: 'POST',
-            data: ajaxParams,
-            success: resolve,
-            error: reject
-          });
-        });
-        console.log('[HW24 Provider] Status saved via jQuery AJAX:', result);
-        _updateStatusUI(fieldName, newValue);
-        return true;
-      } catch (e) {
-        console.log('[HW24 Provider] jQuery AJAX failed:', e, '— trying fetch');
-      }
-    }
-
-    // Strategy 4: Plain fetch with CSRF token
-    try {
-      const params = new URLSearchParams();
-      params.append('module', 'Potentials');
-      params.append('action', 'SaveAjax');
-      params.append('record', recordId);
-      params.append('field', fieldName);
-      params.append('value', newValue);
-      if (csrfToken) params.append('__vtrftk', csrfToken);
-
-      const response = await fetch('index.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString()
-      });
-
-      if (response.ok) {
-        const result = await response.json().catch(() => null);
-        console.log('[HW24 Provider] Status saved via fetch:', result);
-        _updateStatusUI(fieldName, newValue);
-        return true;
-      } else {
-        console.error('[HW24 Provider] Status save failed: HTTP', response.status);
-      }
-    } catch (e) {
-      console.error('[HW24 Provider] All save strategies failed:', e);
-    }
-    return false;
-  }
-
-  function _updateStatusUI(fieldName, newValue) {
-    const displayValue = newValue.replace(/\s*\|##\|\s*/g, ', ');
-    // Update ALL matching elements (Summary view + Detail view)
-    const elements = _findStatusElements(fieldName);
-    for (const el of elements) {
-      el.textContent = displayValue;
-    }
-    // Always cache the value (persists even if no DOM elements found)
-    _cacheStatusValue(newValue);
-    console.log('[HW24 Provider] UI updated (' + elements.length + ' elements), cached:', displayValue);
-  }
-
-  /* ═══════════════════════════════════════════════════════════════════════════
-     MODULE 1c: DEALER COMMENT — POST VIA ModComments SaveAjax
-     ═══════════════════════════════════════════════════════════════════════════
-     Instead of updating a status picklist, dealers post a comment on the record.
-     Uses VTiger's ModComments module.
-     ═══════════════════════════════════════════════════════════════════════════ */
-
-  async function postDealerComment(dealerLabel) {
-    const recordId = _getRecordId();
-    if (!recordId) {
-      console.warn('[HW24 Dealer] Record ID not found — cannot post comment');
-      return false;
-    }
-
-    const commentText = 'Händler-Anfrage: ' + dealerLabel + ' angefragt';
-    console.log('[HW24 Dealer] Posting comment:', commentText);
+    console.log('[HW24] Posting comment:', commentText);
 
     const saveParams = {
       module: 'ModComments',
@@ -485,10 +218,10 @@
         const result = await new Promise((resolve, reject) => {
           AppConnector.request(saveParams).then(resolve, reject);
         });
-        console.log('[HW24 Dealer] Comment posted via AppConnector:', result);
+        console.log('[HW24] Comment posted via AppConnector:', result);
         return true;
       } catch (e) {
-        console.log('[HW24 Dealer] AppConnector failed:', e, '— trying jQuery');
+        console.log('[HW24] AppConnector failed:', e, '— trying jQuery');
       }
     }
 
@@ -496,10 +229,10 @@
     if (typeof app !== 'undefined' && app.request && app.request.post) {
       try {
         const result = await app.request.post({ data: saveParams });
-        console.log('[HW24 Dealer] Comment posted via app.request:', result);
+        console.log('[HW24] Comment posted via app.request:', result);
         return true;
       } catch (e) {
-        console.log('[HW24 Dealer] app.request failed:', e, '— trying jQuery');
+        console.log('[HW24] app.request failed:', e, '— trying jQuery');
       }
     }
 
@@ -519,10 +252,10 @@
             error: reject
           });
         });
-        console.log('[HW24 Dealer] Comment posted via jQuery AJAX:', result);
+        console.log('[HW24] Comment posted via jQuery AJAX:', result);
         return true;
       } catch (e) {
-        console.log('[HW24 Dealer] jQuery AJAX failed:', e, '— trying fetch');
+        console.log('[HW24] jQuery AJAX failed:', e, '— trying fetch');
       }
     }
 
@@ -543,13 +276,13 @@
 
       if (response.ok) {
         const result = await response.json().catch(() => null);
-        console.log('[HW24 Dealer] Comment posted via fetch:', result);
+        console.log('[HW24] Comment posted via fetch:', result);
         return true;
       } else {
-        console.error('[HW24 Dealer] Comment post failed: HTTP', response.status);
+        console.error('[HW24] Comment post failed: HTTP', response.status);
       }
     } catch (e) {
-      console.error('[HW24 Dealer] All comment strategies failed:', e);
+      console.error('[HW24] All comment strategies failed:', e);
     }
     return false;
   }
@@ -1742,10 +1475,10 @@
     // Mark button as loading
     markCurrentButton(provider.key, 'loading');
 
-    // Set provider status on the record (async, don't block)
-    setProviderStatus(config.status).then(ok => {
-      if (ok) console.log('[HW24 Provider] Status "' + config.status + '" saved');
-      else console.warn('[HW24 Provider] Status could not be saved (field not found or save failed)');
+    // Post comment on the record (async, don't block)
+    postRecordComment('Provider-Anfrage: ' + config.label + ' angefragt').then(ok => {
+      if (ok) console.log('[HW24 Provider] Comment posted for', config.label);
+      else console.warn('[HW24 Provider] Comment could not be posted');
     });
 
     // Trigger EMAILMaker — opens Popup 1 (Step 1)
@@ -1768,7 +1501,7 @@
     markCurrentButton(dealer.key, 'loading');
 
     // Post comment on the record (async, don't block)
-    postDealerComment(dealer.label).then(ok => {
+    postRecordComment('H\u00e4ndler-Anfrage: ' + dealer.label + ' angefragt').then(ok => {
       if (ok) console.log('[HW24 Dealer] Comment posted for', dealer.label);
       else console.warn('[HW24 Dealer] Comment could not be posted');
     });
