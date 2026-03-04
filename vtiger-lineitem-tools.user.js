@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.9
+// @version      2.7.10
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.9';
+  const HW24_VERSION = '2.7.10';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1192,17 +1192,24 @@
 
     async function fetchTotalsFromDetailRecord() {
       const recordId = getRecordIdFromLocation();
-      if (!recordId || !currentModule) return null;
+      if (!recordId || !currentModule) {
+        console.warn('[HW24] Commission fallback: missing record/module', { recordId, currentModule, href: location.href });
+        return null;
+      }
 
       try {
         const url = `index.php?module=${currentModule}&view=Detail&record=${recordId}`;
+        console.log('[HW24] Commission fallback: fetching detail record', { url, recordId, currentModule });
         const r = await fetch(url, { credentials: 'same-origin' });
         const html = await r.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
 
         const tbl = findLineItemTableIn(doc);
         const rows = findLineItemRowsIn(tbl);
-        if (!rows.length) return null;
+        if (!rows.length) {
+          console.warn('[HW24] Commission fallback: no line item rows found in fetched detail HTML');
+          return null;
+        }
 
         let sumPC = 0;
         let sumSelling = 0;
@@ -1222,18 +1229,44 @@
         const discountEl = doc.getElementById('discountTotal_final') || doc.querySelector('[id$="_discountTotal_final"]') || doc.querySelector('.discountTotal_final');
         const overallDiscount = toNum(discountEl?.textContent || discountEl?.value);
 
+        console.log('[HW24] Commission fallback: parsed totals from detail HTML', {
+          rows: rows.length,
+          sumPC,
+          sumSelling,
+          itemsTotal,
+          overallDiscount
+        });
+
         return buildTotals(sumPC, itemsTotal, overallDiscount);
-      } catch {
+      } catch (e) {
+        console.error('[HW24] Commission fallback: fetch/parse failed', e);
         return null;
       }
     }
 
     async function calculateTotalsWithFallback() {
       const localTotals = calculateTotals();
-      if (localTotals.sumPC > 0) return localTotals;
+      console.log('[HW24] Commission calc: local totals', {
+        sumPC: localTotals.sumPC,
+        itemsTotal: localTotals.itemsTotal,
+        overallDiscount: localTotals.overallDiscount,
+        partnerCommission: localTotals.partnerCommission
+      });
+
+      if (localTotals.sumPC > 0) {
+        return { ...localTotals, _hw24Source: 'local-dom' };
+      }
+
       const fetchedTotals = await fetchTotalsFromDetailRecord();
-      if (fetchedTotals && fetchedTotals.sumPC > 0) return fetchedTotals;
-      return localTotals;
+      if (fetchedTotals && fetchedTotals.sumPC > 0) {
+        return { ...fetchedTotals, _hw24Source: 'detail-fetch' };
+      }
+
+      console.warn('[HW24] Commission calc: local and fallback totals unavailable', {
+        localSumPC: localTotals.sumPC,
+        fallbackSumPC: fetchedTotals?.sumPC ?? null
+      });
+      return { ...localTotals, _hw24Source: 'local-dom-empty' };
     }
 
     /* Totals Panel */
@@ -3178,11 +3211,24 @@
     /* ── Insert commission into email body ── */
     async function insertCommission() {
       let totals = await MetaOverlay.calculateTotalsWithFallback();
+      console.log('[HW24] Commission insert: first calculation result', {
+        source: totals?._hw24Source || 'unknown',
+        sumPC: totals?.sumPC,
+        partnerCommission: totals?.partnerCommission
+      });
+
       if (!(totals?.sumPC > 0) || !Number.isFinite(totals?.partnerCommission)) {
+        console.log('[HW24] Commission insert: retry after injectTotalsPanel()');
         MetaOverlay.injectTotalsPanel();
         totals = await MetaOverlay.calculateTotalsWithFallback();
+        console.log('[HW24] Commission insert: second calculation result', {
+          source: totals?._hw24Source || 'unknown',
+          sumPC: totals?.sumPC,
+          partnerCommission: totals?.partnerCommission
+        });
       }
       if (!(totals?.sumPC > 0) || !Number.isFinite(totals?.partnerCommission)) {
+        console.warn('[HW24] Commission insert: aborting, no valid totals available');
         alert('Provision kann aktuell nicht berechnet werden. Bitte Kalkulation neu laden.');
         return;
       }
