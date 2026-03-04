@@ -279,16 +279,22 @@
 
     // Try DOM first
     const elements = _findStatusElements(fieldName);
-    for (const el of elements) {
-      const text = el.textContent.trim();
-      if (text) {
-        // Cache the current value per record
-        if (recordId) localStorage.setItem('hw24_provider_status_val_' + recordId, text);
-        return text;
+    if (elements.length > 0) {
+      // Field exists in DOM — trust DOM value, even if empty
+      for (const el of elements) {
+        const text = el.textContent.trim();
+        if (text) {
+          if (recordId) localStorage.setItem('hw24_provider_status_val_' + recordId, text);
+          return text;
+        }
       }
+      // Field found but empty → genuinely empty, clear stale cache
+      if (recordId) localStorage.removeItem('hw24_provider_status_val_' + recordId);
+      return '';
     }
 
-    // Fallback: localStorage cache (for when field is not in DOM, e.g. Summary view)
+    // No elements in DOM (field not rendered in this view, e.g. Summary view)
+    // → fall back to localStorage cache
     if (recordId) {
       const cached = localStorage.getItem('hw24_provider_status_val_' + recordId);
       if (cached) {
