@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.3.0
+// @version      1.4.0
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
-// @description  Provider-Anfragen: Vorbereitungs-Buttons für Provider-E-Mails auf Potentials
+// @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
 // @match        https://vtiger.hardwarewartung.com/index.php*
 // @grant        none
 // @run-at       document-end
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.3.0';
+  const HW24_VERSION = '1.4.0';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -74,11 +74,26 @@
   ];
 
   /* ═══════════════════════════════════════════════════════════════════════════
+     DEALER CONFIGURATION (Hardware-Händler)
+     ═══════════════════════════════════════════════════════════════════════════
+     Dealers use comment posting instead of status field updates.
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  const DEALERS = [
+    { key: 'Nordic',    label: 'Nordic',     to: 'ksp@nordiccomputer.com',                   cc: '',                greeting: 'Hello Kevon,',           style: 'du',  lang: 'en' },
+    { key: 'Epoka',     label: 'Epoka',      to: 'aly@epoka.com',                            cc: 'Sales@epoka.com', greeting: 'Hallo Andrej,',          style: 'du',  lang: 'de' },
+    { key: 'Techbuyer', label: 'Techbuyer',  to: 'n.sinatra@techbuyer.com',                  cc: '',                greeting: 'Hallo Nino,',            style: 'du',  lang: 'de' },
+    { key: 'FlexIT',    label: 'FlexIT',     to: 'silvia.zeljenkova@flexitdistribution.com', cc: '',                greeting: 'Hallo Frau Zeljenkova,', style: 'sie', lang: 'de' },
+    { key: 'Renewtech', label: 'Renewtech',  to: 'mimo@renewtech.com',                       cc: '',                greeting: 'Hello Mikkel,',          style: 'du',  lang: 'en' },
+  ];
+
+  /* ═══════════════════════════════════════════════════════════════════════════
      STATE
      ═══════════════════════════════════════════════════════════════════════════ */
 
   let pendingProvider = null;
   let pendingDescriptionText = '';  // cached from detail view before popup opens
+  let pendingType = null;            // 'provider' or 'dealer'
   let step1Handled = false;
 
   // Per-provider "Sie" toggle: true = formal/Sie, false = du (default)
@@ -91,6 +106,7 @@
   }
 
   const DETAIL_TOOLBAR_ID = 'hw24-provider-toolbar';
+  const DEALER_TOOLBAR_ID = 'hw24-dealer-toolbar';
   const COMPOSE_TOOLBAR_ID = 'hw24-provider-email-toolbar';
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -441,6 +457,105 @@
     // Always cache the value (persists even if no DOM elements found)
     _cacheStatusValue(newValue);
     console.log('[HW24 Provider] UI updated (' + elements.length + ' elements), cached:', displayValue);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 1c: DEALER COMMENT — POST VIA ModComments SaveAjax
+     ═══════════════════════════════════════════════════════════════════════════
+     Instead of updating a status picklist, dealers post a comment on the record.
+     Uses VTiger's ModComments module.
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  async function postDealerComment(dealerLabel) {
+    const recordId = _getRecordId();
+    if (!recordId) {
+      console.warn('[HW24 Dealer] Record ID not found — cannot post comment');
+      return false;
+    }
+
+    const commentText = 'Händler-Anfrage: ' + dealerLabel + ' angefragt';
+    console.log('[HW24 Dealer] Posting comment:', commentText);
+
+    const saveParams = {
+      module: 'ModComments',
+      action: 'SaveAjax',
+      related_to: recordId,
+      commentcontent: commentText
+    };
+
+    // Strategy 1: VTiger AppConnector
+    if (typeof AppConnector !== 'undefined' && AppConnector.request) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          AppConnector.request(saveParams).then(resolve, reject);
+        });
+        console.log('[HW24 Dealer] Comment posted via AppConnector:', result);
+        return true;
+      } catch (e) {
+        console.log('[HW24 Dealer] AppConnector failed:', e, '— trying jQuery');
+      }
+    }
+
+    // Strategy 2: VTiger app.request
+    if (typeof app !== 'undefined' && app.request && app.request.post) {
+      try {
+        const result = await app.request.post({ data: saveParams });
+        console.log('[HW24 Dealer] Comment posted via app.request:', result);
+        return true;
+      } catch (e) {
+        console.log('[HW24 Dealer] app.request failed:', e, '— trying jQuery');
+      }
+    }
+
+    // Strategy 3: jQuery AJAX with CSRF token
+    const jq = window.jQuery || window.$;
+    const csrfToken = _getCsrfToken();
+    if (jq) {
+      const ajaxParams = { ...saveParams };
+      if (csrfToken) ajaxParams.__vtrftk = csrfToken;
+      try {
+        const result = await new Promise((resolve, reject) => {
+          jq.ajax({
+            url: 'index.php',
+            type: 'POST',
+            data: ajaxParams,
+            success: resolve,
+            error: reject
+          });
+        });
+        console.log('[HW24 Dealer] Comment posted via jQuery AJAX:', result);
+        return true;
+      } catch (e) {
+        console.log('[HW24 Dealer] jQuery AJAX failed:', e, '— trying fetch');
+      }
+    }
+
+    // Strategy 4: Plain fetch
+    try {
+      const params = new URLSearchParams();
+      params.append('module', 'ModComments');
+      params.append('action', 'SaveAjax');
+      params.append('related_to', recordId);
+      params.append('commentcontent', commentText);
+      if (csrfToken) params.append('__vtrftk', csrfToken);
+
+      const response = await fetch('index.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString()
+      });
+
+      if (response.ok) {
+        const result = await response.json().catch(() => null);
+        console.log('[HW24 Dealer] Comment posted via fetch:', result);
+        return true;
+      } else {
+        console.error('[HW24 Dealer] Comment post failed: HTTP', response.status);
+      }
+    } catch (e) {
+      console.error('[HW24 Dealer] All comment strategies failed:', e);
+    }
+    return false;
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1329,21 +1444,22 @@
 
     const toolbar = document.createElement('div');
     toolbar.id = COMPOSE_TOOLBAR_ID;
-    toolbar.style.cssText = 'padding:8px 12px;background:linear-gradient(135deg,#ede9fe 0%,#ddd6fe 100%);border-bottom:1px solid #8b5cf6;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;font-family:system-ui,-apple-system,sans-serif;z-index:1001;';
+    const isDealer = pendingType === 'dealer';
+    toolbar.style.cssText = 'padding:8px 12px;background:' + (isDealer ? 'linear-gradient(135deg,#e0f2fe 0%,#bae6fd 100%)' : 'linear-gradient(135deg,#ede9fe 0%,#ddd6fe 100%)') + ';border-bottom:1px solid ' + (isDealer ? '#0284c7' : '#8b5cf6') + ';display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;font-family:system-ui,-apple-system,sans-serif;z-index:1001;';
 
     const label = document.createElement('span');
-    label.style.cssText = 'font-weight:600;color:#5b21b6;';
-    label.textContent = '\uD83D\uDCE8 Provider: ' + provider.label + ' (' + provider.key + ')';
+    label.style.cssText = 'font-weight:600;color:' + (isDealer ? '#075985' : '#5b21b6') + ';';
+    label.textContent = (isDealer ? '\uD83D\uDED2 H\u00e4ndler: ' : '\uD83D\uDCE8 Provider: ') + provider.label + ' (' + provider.key + ')';
     toolbar.appendChild(label);
 
     const sep = document.createElement('span');
     sep.textContent = ' \u2014 ';
-    sep.style.color = '#7c3aed';
+    sep.style.color = isDealer ? '#0369a1' : '#7c3aed';
     toolbar.appendChild(sep);
 
     const status = document.createElement('span');
     status.className = 'hw24-provider-status';
-    status.style.cssText = 'color:#6d28d9;font-style:italic;';
+    status.style.cssText = 'color:' + (isDealer ? '#0c4a6e' : '#6d28d9') + ';font-style:italic;';
     status.textContent = '\u23F3 Wird vorbereitet...';
     toolbar.appendChild(status);
 
@@ -1405,7 +1521,7 @@
 
     } catch (err) {
       console.error('[HW24 Provider] Step 1 error:', err);
-      markDetailButton(provider.key, 'error');
+      markCurrentButton(provider.key, 'error');
     }
   }
 
@@ -1442,16 +1558,17 @@
 
       // Done
       updateProviderEmailToolbarStatus('\u2705 Fertig — bitte prüfen & senden');
-      markDetailButton(provider.key, 'done');
+      markCurrentButton(provider.key, 'done');
       console.log('[HW24 Provider] Email preparation complete for', provider.label);
 
     } catch (err) {
       console.error('[HW24 Provider] Step 2 error:', err);
       updateProviderEmailToolbarStatus('\u274C Fehler: ' + err.message);
-      markDetailButton(provider.key, 'error');
+      markCurrentButton(provider.key, 'error');
     }
 
     pendingProvider = null;
+    pendingType = null;
     step1Handled = false;
   }
 
@@ -1559,6 +1676,37 @@
     }
   }
 
+  function markDealerButton(dealerKey, state) {
+    const btn = document.getElementById('hw24-dealer-btn-' + dealerKey);
+    if (!btn) return;
+    if (state === 'loading') {
+      btn.disabled = true;
+      btn.dataset.origLabel = btn.textContent;
+      btn.textContent = '\u23F3 l\u00e4uft...';
+      btn.style.opacity = '0.7';
+      btn.style.cursor = 'wait';
+    } else if (state === 'done') {
+      btn.disabled = true;
+      btn.textContent = '\u2705 ' + (btn.dataset.origLabel || btn.textContent);
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+      btn.style.background = '#d1fae5';
+      btn.style.borderColor = '#059669';
+    } else if (state === 'error') {
+      btn.disabled = false;
+      btn.textContent = '\u274C ' + (btn.dataset.origLabel || btn.textContent);
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      btn.style.background = '#fee2e2';
+      btn.style.borderColor = '#dc2626';
+    }
+  }
+
+  function markCurrentButton(key, state) {
+    if (pendingType === 'dealer') markDealerButton(key, state);
+    else markDetailButton(key, state);
+  }
+
   function handleProviderClick(provider) {
     const config = resolveProviderConfig(provider);
     console.log('[HW24 Provider] Provider clicked:', config.label, '| To:', config.to, '| CC:', config.cc, '| Style:', config.style, '| Lang:', config.lang);
@@ -1569,15 +1717,41 @@
 
     // Set pending provider + reset step tracking
     pendingProvider = { ...provider };
+    pendingType = 'provider';
     step1Handled = false;
 
     // Mark button as loading
-    markDetailButton(provider.key, 'loading');
+    markCurrentButton(provider.key, 'loading');
 
     // Set provider status on the record (async, don't block)
     setProviderStatus(config.status).then(ok => {
       if (ok) console.log('[HW24 Provider] Status "' + config.status + '" saved');
       else console.warn('[HW24 Provider] Status could not be saved (field not found or save failed)');
+    });
+
+    // Trigger EMAILMaker — opens Popup 1 (Step 1)
+    triggerEMAILMakerCompose();
+  }
+
+  function handleDealerClick(dealer) {
+    console.log('[HW24 Dealer] Dealer clicked:', dealer.label, '| To:', dealer.to, '| CC:', dealer.cc, '| Style:', dealer.style, '| Lang:', dealer.lang);
+
+    // Cache description from detail view BEFORE opening popup
+    pendingDescriptionText = readDescriptionText();
+    console.log('[HW24 Dealer] Description cached, length:', pendingDescriptionText.length);
+
+    // Set pending provider (reuse same flow) + type
+    pendingProvider = { ...dealer };
+    pendingType = 'dealer';
+    step1Handled = false;
+
+    // Mark button as loading
+    markCurrentButton(dealer.key, 'loading');
+
+    // Post comment on the record (async, don't block)
+    postDealerComment(dealer.label).then(ok => {
+      if (ok) console.log('[HW24 Dealer] Comment posted for', dealer.label);
+      else console.warn('[HW24 Dealer] Comment could not be posted');
     });
 
     // Trigger EMAILMaker — opens Popup 1 (Step 1)
@@ -1690,15 +1864,104 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 10b: DETAIL VIEW TOOLBAR (Dealer / Händler Buttons)
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  function injectDealerToolbar() {
+    if (document.getElementById(DEALER_TOOLBAR_ID)) return;
+
+    // Place directly after the provider toolbar if it exists, otherwise same strategy
+    let target = document.getElementById(DETAIL_TOOLBAR_ID);
+    let insertMode = 'after';
+
+    if (!target) {
+      const addTag = document.querySelector('.addTag, [class*="addTag"], a[href*="addTag"], [id*="addTag"]');
+      if (addTag) {
+        target = addTag.closest('div, span, td') || addTag.parentElement;
+        insertMode = 'after';
+      }
+    }
+
+    if (!target) {
+      const tabBar = document.querySelector('.detailViewInfo .related-tabs, .tabContainer, ul.nav-tabs, .detailview-tab, [class*="relatedTabs"]');
+      if (tabBar) {
+        target = tabBar;
+        insertMode = 'before';
+      }
+    }
+
+    if (!target) {
+      const headerBlock = document.querySelector('.detailViewInfo .recordDetails, .detailViewInfo > .row:first-child, .recordBasicInfo');
+      if (headerBlock) {
+        target = headerBlock;
+        insertMode = 'after';
+      }
+    }
+
+    if (!target) {
+      target = document.querySelector('.detailViewTitle, .detailViewInfo');
+      insertMode = 'after';
+    }
+
+    if (!target) {
+      console.warn('[HW24 Dealer] Detail view target element not found');
+      return;
+    }
+
+    const toolbar = document.createElement('div');
+    toolbar.id = DEALER_TOOLBAR_ID;
+    toolbar.style.cssText = 'padding:8px 15px;background:linear-gradient(135deg,#e0f2fe 0%,#bae6fd 100%);border:1px solid #7dd3fc;border-radius:6px;margin:4px 15px 8px 15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;font-family:system-ui,-apple-system,sans-serif;';
+
+    // Label
+    const label = document.createElement('span');
+    label.style.cssText = 'font-weight:700;color:#075985;margin-right:4px;white-space:nowrap;';
+    label.textContent = '\uD83D\uDED2 H\u00e4ndler-Anfrage:';
+    toolbar.appendChild(label);
+
+    // Dealer buttons
+    for (const dealer of DEALERS) {
+      const btn = document.createElement('button');
+      btn.id = 'hw24-dealer-btn-' + dealer.key;
+      btn.type = 'button';
+      btn.textContent = dealer.label;
+      btn.title = 'E-Mail an ' + dealer.label + ' vorbereiten (' + dealer.to + ')';
+      btn.style.cssText = 'padding:5px 12px;font-size:12px;background:#fff;color:#1e293b;border:1px solid #0284c7;border-radius:4px;cursor:pointer;font-weight:500;transition:background 0.2s,border-color 0.2s;';
+      btn.onmouseenter = () => { if (!btn.disabled) { btn.style.background = '#e0f2fe'; btn.style.borderColor = '#0369a1'; } };
+      btn.onmouseleave = () => { if (!btn.disabled) { btn.style.background = '#fff'; btn.style.borderColor = '#0284c7'; } };
+      btn.onclick = () => handleDealerClick(dealer);
+      toolbar.appendChild(btn);
+    }
+
+    // Insert toolbar
+    if (insertMode === 'before') {
+      target.parentNode.insertBefore(toolbar, target);
+    } else {
+      if (target.nextSibling) {
+        target.parentNode.insertBefore(toolbar, target.nextSibling);
+      } else {
+        target.parentNode.appendChild(toolbar);
+      }
+    }
+
+    console.log('[HW24 Dealer] Dealer toolbar injected with', DEALERS.length, 'buttons');
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════════
      INITIALIZATION
      ═══════════════════════════════════════════════════════════════════════════ */
 
   function init() {
     injectDetailToolbar();
+    injectDealerToolbar();
     if (!document.getElementById(DETAIL_TOOLBAR_ID)) {
       setTimeout(injectDetailToolbar, 500);
       setTimeout(injectDetailToolbar, 1500);
       setTimeout(injectDetailToolbar, 3000);
+    }
+    if (!document.getElementById(DEALER_TOOLBAR_ID)) {
+      setTimeout(injectDealerToolbar, 500);
+      setTimeout(injectDealerToolbar, 1500);
+      setTimeout(injectDealerToolbar, 3000);
     }
     initComposeObserver();
   }
