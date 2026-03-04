@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.7
+// @version      2.7.8
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.7';
+  const HW24_VERSION = '2.7.8';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2682,13 +2682,65 @@
       return `<p>${commissionText}</p>`;
     }
 
-    /* ── Find a text node containing the anchor sentence ── */
-    function findAnchorNode(root, text) {
+    function normalizeMatchText(text) {
+      return S(text)
+        .toLowerCase()
+        .replace(/\u00a0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/[.,;:!?]/g, '')
+        .trim();
+    }
+
+    function getAnchorRegexes(lang) {
+      if (lang === 'en') {
+        return [
+          /we also attached our servicebook/i,
+          /attached our servicebook/i,
+          /servicebook/i
+        ];
+      }
+      return [
+        /ebenso finden sie unser servicebook im anhang/i,
+        /ebenso findest du unser servicebook im anhang/i,
+        /servicebook im anhang/i
+      ];
+    }
+
+    function getSignatureRegexes() {
+      return [
+        /mit freundlichen gr(?:u|ü)(?:ss|ß)en/i,
+        /liebe gr(?:u|ü)(?:ss|ß)e/i,
+        /kind regards/i,
+        /best regards/i
+      ];
+    }
+
+    function findTextNodeByRegexes(root, regexes) {
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
       while (walker.nextNode()) {
-        if (walker.currentNode.textContent.includes(text)) return walker.currentNode;
+        const normalized = normalizeMatchText(walker.currentNode.textContent);
+        if (!normalized) continue;
+        if (regexes.some(rx => rx.test(normalized))) return walker.currentNode;
       }
       return null;
+    }
+
+    function findAnchorNode(root, lang) {
+      return findTextNodeByRegexes(root, getAnchorRegexes(lang));
+    }
+
+    function findSignatureNode(root) {
+      return findTextNodeByRegexes(root, getSignatureRegexes());
+    }
+
+    function findInsertIndexByRegexes(text, regexes) {
+      let best = null;
+      for (const rx of regexes) {
+        const m = rx.exec(text);
+        if (!m) continue;
+        if (!best || m.index < best.index) best = { index: m.index, length: m[0].length };
+      }
+      return best;
     }
 
     /* ── Helper: read current email HTML ── */
@@ -3038,10 +3090,13 @@
 
     /* ── Insert commission into email body ── */
     function insertCommission() {
-      // Calculate totals
-      const totals = MetaOverlay.calculateTotals();
-      if (!totals.sumPC) {
-        alert('Keine Purchase-Cost-Daten vorhanden \u2014 Provision kann nicht berechnet werden.');
+      let totals = MetaOverlay.calculateTotals();
+      if (!Number.isFinite(totals?.partnerCommission)) {
+        MetaOverlay.injectTotalsPanel();
+        totals = MetaOverlay.calculateTotals();
+      }
+      if (!Number.isFinite(totals?.partnerCommission)) {
+        alert('Provision kann aktuell nicht berechnet werden. Bitte Kalkulation neu laden.');
         return;
       }
 
@@ -3052,26 +3107,21 @@
       }
       const { body, html } = data;
 
-      // Save original for undo
       saveForUndo(html, body.type);
 
-      // Detect language
       const lang = detectLanguage(html);
       const commissionText = buildCommissionText(totals.partnerCommission, lang);
-
-      // Anchor sentences to insert before
-      const anchorDE = 'Ebenso finden Sie unser Servicebook im Anhang';
-      const anchorEN = 'We also attached our Servicebook.';
-      const anchor = lang === 'de' ? anchorDE : anchorEN;
 
       let inserted = false;
 
       if (body.type === 'textarea') {
-        // Plain text: simple string insert
-        const idx = html.indexOf(anchor);
-        if (idx !== -1) {
-          const before = html.substring(0, idx);
-          const after = html.substring(idx);
+        const anchorMatch = findInsertIndexByRegexes(html, getAnchorRegexes(lang));
+        const signatureMatch = findInsertIndexByRegexes(html, getSignatureRegexes());
+        const target = anchorMatch || signatureMatch;
+
+        if (target) {
+          const before = html.substring(0, target.index);
+          const after = html.substring(target.index);
           body.el.value = before + commissionText + '\n\n' + after;
         } else {
           body.el.value = html + '\n\n' + commissionText;
@@ -3079,9 +3129,7 @@
         fire(body.el);
         inserted = true;
       } else {
-        // HTML modes: manipulate the live DOM directly to avoid
-        // innerHTML round-trip which destroys formatting.
-        let root; // the live editable DOM element
+        let root;
         let ownerDoc;
         if (body.type === 'ckeditor') {
           const editable = body.editor.editable();
@@ -3112,11 +3160,14 @@
             newP.textContent = commissionText;
           }
 
-          const anchorNode = findAnchorNode(root, anchor);
-          if (anchorNode) {
-            const anchorEl = anchorNode.nodeType === Node.TEXT_NODE
-              ? anchorNode.parentElement : anchorNode;
-            const blockEl = anchorEl.closest('p, div, tr, li, blockquote') || anchorEl;
+          const anchorNode = findAnchorNode(root, lang);
+          const signatureNode = findSignatureNode(root);
+          const insertBeforeNode = anchorNode || signatureNode;
+
+          if (insertBeforeNode) {
+            const insertEl = insertBeforeNode.nodeType === Node.TEXT_NODE
+              ? insertBeforeNode.parentElement : insertBeforeNode;
+            const blockEl = insertEl.closest('p, div, tr, li, blockquote') || insertEl;
             blockEl.parentNode.insertBefore(newP, blockEl);
           } else {
             root.appendChild(newP);
