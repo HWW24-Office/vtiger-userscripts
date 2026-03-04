@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.8
+// @version      2.7.9
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.8';
+  const HW24_VERSION = '2.7.9';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1139,6 +1139,103 @@
       showToolbarStatus(toolbar, `✓ ${count} Positionen aktualisiert`);
     }
 
+    function buildTotals(sumPC, itemsTotal, overallDiscount) {
+      const marginBeforeDiscount = itemsTotal - sumPC;
+      const marginBeforeDiscountPct = sumPC ? (marginBeforeDiscount / sumPC * 100) : 0;
+      const effectiveTotal = itemsTotal - overallDiscount;
+      const marginAfterDiscount = effectiveTotal - sumPC;
+      const marginAfterDiscountPct = sumPC ? (marginAfterDiscount / sumPC * 100) : 0;
+      const commissionPct = parseFloat(localStorage.getItem('hw24-commission-pct') || '50');
+      const partnerCommission = marginAfterDiscount * (commissionPct / 100);
+      return {
+        sumPC,
+        itemsTotal,
+        overallDiscount,
+        marginBeforeDiscount,
+        marginBeforeDiscountPct,
+        effectiveTotal,
+        marginAfterDiscount,
+        marginAfterDiscountPct,
+        partnerCommission,
+        commissionPct
+      };
+    }
+
+    function getRecordIdFromLocation() {
+      return new URLSearchParams(location.search).get('record') || '';
+    }
+
+    function findLineItemTableIn(root) {
+      return root.querySelector('#lineItemTab') ||
+        root.querySelector('table.lineItemsTable') ||
+        root.querySelector('.lineItemsTable') ||
+        root.querySelector('.lineItemTab') ||
+        root.querySelector('[id*="lineItem"]') ||
+        root.querySelector('.detailViewTable table') ||
+        root.querySelector('.inventoryTable') ||
+        root.querySelector('table.listview-table');
+    }
+
+    function findLineItemRowsIn(container) {
+      if (!container) return [];
+      const selectors = ['tr.lineItemRow[id^="row"]', 'tr.inventoryRow', 'tr[id^="row"]', 'tr.listViewEntries', 'tr[data-row-num]', 'tbody tr', 'tr'];
+      for (const sel of selectors) {
+        const rows = [...container.querySelectorAll(sel)];
+        const validRows = rows.filter(tr =>
+          tr.querySelector('a[href*="module=Products"]') ||
+          tr.querySelector('a[href*="module=Services"]')
+        );
+        if (validRows.length > 0) return validRows;
+      }
+      return [];
+    }
+
+    async function fetchTotalsFromDetailRecord() {
+      const recordId = getRecordIdFromLocation();
+      if (!recordId || !currentModule) return null;
+
+      try {
+        const url = `index.php?module=${currentModule}&view=Detail&record=${recordId}`;
+        const r = await fetch(url, { credentials: 'same-origin' });
+        const html = await r.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const tbl = findLineItemTableIn(doc);
+        const rows = findLineItemRowsIn(tbl);
+        if (!rows.length) return null;
+
+        let sumPC = 0;
+        let sumSelling = 0;
+
+        rows.forEach(tr => {
+          const cells = tr.querySelectorAll('td');
+          if (cells.length < 4) return;
+          const qty = toNum(cells[1]?.textContent) || 1;
+          const pcTotal = toNum(cells[2]?.textContent);
+          const sellingPerUnit = toNum(cells[3]?.textContent);
+          sumPC += pcTotal;
+          sumSelling += sellingPerUnit * qty;
+        });
+
+        const netTotalEl = doc.getElementById('netTotal') || doc.querySelector('[id$="_netTotal"]') || doc.querySelector('.netTotal');
+        const itemsTotal = netTotalEl ? toNum(netTotalEl.textContent || netTotalEl.value) : sumSelling;
+        const discountEl = doc.getElementById('discountTotal_final') || doc.querySelector('[id$="_discountTotal_final"]') || doc.querySelector('.discountTotal_final');
+        const overallDiscount = toNum(discountEl?.textContent || discountEl?.value);
+
+        return buildTotals(sumPC, itemsTotal, overallDiscount);
+      } catch {
+        return null;
+      }
+    }
+
+    async function calculateTotalsWithFallback() {
+      const localTotals = calculateTotals();
+      if (localTotals.sumPC > 0) return localTotals;
+      const fetchedTotals = await fetchTotalsFromDetailRecord();
+      if (fetchedTotals && fetchedTotals.sumPC > 0) return fetchedTotals;
+      return localTotals;
+    }
+
     /* Totals Panel */
     function calculateTotals() {
       let rows = [...document.querySelectorAll('tr.lineItemRow[id^="row"],tr.inventoryRow')];
@@ -1167,17 +1264,7 @@
       const discountEl = $('discountTotal_final') || document.querySelector('[id$="_discountTotal_final"]') || document.querySelector('.discountTotal_final');
       const overallDiscount = toNum(discountEl?.textContent || discountEl?.value);
 
-      const marginBeforeDiscount = itemsTotal - sumPC;
-      const marginBeforeDiscountPct = sumPC ? (marginBeforeDiscount / sumPC * 100) : 0;
-      const effectiveTotal = itemsTotal - overallDiscount;
-      const marginAfterDiscount = effectiveTotal - sumPC;
-      const marginAfterDiscountPct = sumPC ? (marginAfterDiscount / sumPC * 100) : 0;
-
-      // Partner-Provision: Standard 50%, konfigurierbar via localStorage
-      const commissionPct = parseFloat(localStorage.getItem('hw24-commission-pct') || '50');
-      const partnerCommission = marginAfterDiscount * (commissionPct / 100);
-
-      return { sumPC, itemsTotal, overallDiscount, marginBeforeDiscount, marginBeforeDiscountPct, effectiveTotal, marginAfterDiscount, marginAfterDiscountPct, partnerCommission, commissionPct };
+      return buildTotals(sumPC, itemsTotal, overallDiscount);
     }
 
     function injectTotalsPanel() {
@@ -1876,7 +1963,7 @@
       });
     }
 
-    return { processEdit, processDetail, injectTotalsPanel, injectReloadButton, interceptSaveButton, waitForElement, findLineItemTable, calculateTotals };
+    return { processEdit, processDetail, injectTotalsPanel, injectReloadButton, interceptSaveButton, waitForElement, findLineItemTable, calculateTotals, calculateTotalsWithFallback };
   })();
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -3089,13 +3176,13 @@
     }
 
     /* ── Insert commission into email body ── */
-    function insertCommission() {
-      let totals = MetaOverlay.calculateTotals();
-      if (!Number.isFinite(totals?.partnerCommission)) {
+    async function insertCommission() {
+      let totals = await MetaOverlay.calculateTotalsWithFallback();
+      if (!(totals?.sumPC > 0) || !Number.isFinite(totals?.partnerCommission)) {
         MetaOverlay.injectTotalsPanel();
-        totals = MetaOverlay.calculateTotals();
+        totals = await MetaOverlay.calculateTotalsWithFallback();
       }
-      if (!Number.isFinite(totals?.partnerCommission)) {
+      if (!(totals?.sumPC > 0) || !Number.isFinite(totals?.partnerCommission)) {
         alert('Provision kann aktuell nicht berechnet werden. Bitte Kalkulation neu laden.');
         return;
       }
