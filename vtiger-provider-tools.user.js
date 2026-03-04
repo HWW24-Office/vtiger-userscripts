@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.6
+// @version      1.5.7
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.6';
+  const HW24_VERSION = '1.5.7';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -891,7 +891,9 @@
 
     const toInput = _findEmailInput(container, 'to');
 
-    // Strategy 1: Select2 v3.x jQuery API on the input
+    // Strategy 1: Select2 v3.x API only for CLEAR
+    // Do not set recipient via select2("data") directly because this can look
+    // correct in UI but fail in EMAILMaker submit pipeline.
     if (toInput && jq) {
       const $input = jq(toInput);
       try {
@@ -901,10 +903,6 @@
           // Clear existing data
           $input.select2('data', []);
           console.log('[HW24 Provider] Step2: Cleared To via select2("data", [])');
-          // Set new email
-          $input.select2('data', [{ id: email, text: email }]);
-          console.log('[HW24 Provider] Step2: To set to', email, 'via select2("data")');
-          return;
         }
       } catch (e) {
         console.log('[HW24 Provider] Step2: select2() API failed:', e.message, '— trying fallbacks');
@@ -1018,13 +1016,13 @@
     console.warn('[HW24 Provider] Step2: Could not add', field, '=', email);
   }
 
-  async function ensureToRecipient(container, provider, maxAttempts = 3) {
+  async function ensureToRecipient(container, provider, maxAttempts = 5) {
     const jq = window.jQuery || window.$;
     const expectedTo = provider.to.toLowerCase();
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       _clearAndSetToField(container, jq, provider.to);
-      await sleep(900);
+      await sleep(1400);
 
       const state = getToRecipientState(container);
       const hasExpected = state.all.includes(expectedTo);
@@ -1585,7 +1583,7 @@
 
       // Hard verify To recipient and retry if needed
       updateProviderEmailToolbarStatus('\u23F3 Empfänger werden verifiziert...');
-      const toOk = await ensureToRecipient(container, config, 4);
+      const toOk = await ensureToRecipient(container, config, 5);
       if (!toOk) {
         const state = getToRecipientState(container);
         throw new Error('To-Empfänger konnte nicht sicher gesetzt werden. Erwartet: ' + config.to + ' | Aktuell: ' + (state.all.join(', ') || '(leer)'));
