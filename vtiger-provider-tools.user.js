@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.4
+// @version      1.5.5
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.4';
+  const HW24_VERSION = '1.5.5';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -1109,11 +1109,54 @@
     }
 
     const allEmails = new Set([...visibleEmails, ...backingEmails]);
+    const rawValues = new Set();
+
+    if (toInput?.value) rawValues.add(String(toInput.value).trim().toLowerCase());
+
+    const rawCandidates = container.querySelectorAll('input[type="hidden"], input[type="text"]');
+    for (const el of rawCandidates) {
+      const n = (el.name || el.id || '').toLowerCase();
+      if (!/^(toemail|to_email|toemailids|to)$/.test(n)) continue;
+      const v = String(el.value || '').trim().toLowerCase();
+      if (v) rawValues.add(v);
+    }
+
     return {
       visible: [...visibleEmails],
       backing: [...backingEmails],
-      all: [...allEmails]
+      all: [...allEmails],
+      raw: [...rawValues]
     };
+  }
+
+  function forceSetToBeforeSend(container, expectedTo) {
+    const jq = window.jQuery || window.$;
+    const toInput = _findEmailInput(container, 'to');
+
+    if (toInput) {
+      try {
+        toInput.value = expectedTo;
+        fire(toInput);
+        if (jq) {
+          const $input = jq(toInput);
+          if ($input.data('select2')) {
+            $input.select2('data', [{ id: expectedTo, text: expectedTo }]);
+          } else {
+            $input.val(expectedTo).trigger('change');
+          }
+        }
+      } catch (e) {
+        console.warn('[HW24 Provider] Pre-send To force-set failed on main input:', e?.message || e);
+      }
+    }
+
+    const rawCandidates = container.querySelectorAll('input[type="hidden"], input[type="text"]');
+    for (const el of rawCandidates) {
+      const n = (el.name || el.id || '').toLowerCase();
+      if (!/^(toemail|to_email|toemailids|to)$/.test(n)) continue;
+      el.value = expectedTo;
+      fire(el);
+    }
   }
 
   function isSendActionControl(el) {
@@ -1141,8 +1184,15 @@
       const expectedTo = container.__hw24ExpectedTo;
       if (!expectedTo) return true;
 
-      const state = getToRecipientState(container);
-      const hasExpected = state.all.includes(expectedTo);
+      let state = getToRecipientState(container);
+      let hasExpected = state.all.includes(expectedTo) || state.raw.some(v => v.includes(expectedTo));
+
+      if (!hasExpected) {
+        forceSetToBeforeSend(container, expectedTo);
+        state = getToRecipientState(container);
+        hasExpected = state.all.includes(expectedTo) || state.raw.some(v => v.includes(expectedTo));
+      }
+
       const visibleExtras = state.visible.filter(e => e !== expectedTo);
 
       if (!hasExpected || visibleExtras.length > 0) {
@@ -1155,13 +1205,15 @@
           visibleTo: state.visible,
           backingTo: state.backing,
           allTo: state.all,
+          rawTo: state.raw,
           provider: container.__hw24ExpectedLabel
         });
 
         alert(
           'Senden wurde aus Sicherheitsgründen blockiert.\n\n' +
           'Erwarteter Empfänger (To): ' + expectedTo + '\n' +
-          'Gefundene Empfänger (To): ' + (state.all.length ? state.all.join(', ') : '(leer)') + '\n\n' +
+          'Gefundene Empfänger (To): ' + (state.all.length ? state.all.join(', ') : '(leer)') + '\n' +
+          'Rohwerte (To): ' + (state.raw.length ? state.raw.join(' | ') : '(leer)') + '\n\n' +
           'Bitte To-Feld korrigieren und erneut senden.'
         );
         return false;
@@ -1171,7 +1223,8 @@
         expectedTo,
         visibleTo: state.visible,
         backingTo: state.backing,
-        allTo: state.all
+        allTo: state.all,
+        rawTo: state.raw
       });
       return true;
     };
