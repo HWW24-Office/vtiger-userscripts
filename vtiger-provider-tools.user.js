@@ -1306,17 +1306,38 @@
 
   /**
    * Check if the description text is already present in the email body.
-   * The template "Anfrage Händler" likely includes it via a template variable.
+   * The template "Anfrage Händler" includes it via $potential_description$.
+   * Uses aggressive normalization to handle HTML entities vs plain text mismatches.
    */
   function descriptionAlreadyInBody(html, descText) {
     if (!descText) return true; // nothing to insert
-    // Get the first significant line of the description (skip empty/short lines)
-    const lines = descText.split('\n').map(l => l.trim()).filter(l => l.length > 5);
-    if (lines.length === 0) return true;
-    // Strip HTML tags from body for text comparison
-    const plainBody = html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ');
-    // Check if the first line of description appears in the body
-    return plainBody.includes(lines[0]);
+
+    const normalize = s => s
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&apos;/gi, "'")
+      .replace(/&auml;/gi, '\u00e4').replace(/&ouml;/gi, '\u00f6').replace(/&uuml;/gi, '\u00fc')
+      .replace(/&Auml;/gi, '\u00c4').replace(/&Ouml;/gi, '\u00d6').replace(/&Uuml;/gi, '\u00dc')
+      .replace(/&szlig;/gi, '\u00df').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+      .replace(/\s+/g, ' ').trim().toLowerCase();
+
+    const plainBody = normalize(html);
+
+    // Check individual lines of the raw description
+    const lines = descText.split('\n').map(l => l.trim()).filter(l => l.length > 10);
+    for (const line of lines.slice(0, 5)) {
+      const normalizedLine = normalize(line);
+      if (normalizedLine.length > 10 && plainBody.includes(normalizedLine)) return true;
+    }
+
+    // Fallback: check first 40 chars of the full normalized description
+    const plainDesc = normalize(descText);
+    if (plainDesc.length > 20) {
+      const snippet = plainDesc.substring(0, 40);
+      if (plainBody.includes(snippet)) return true;
+    }
+
+    return false;
   }
 
   async function fillEmailBody(provider) {
@@ -1401,7 +1422,9 @@
         const idx = result.indexOf(closingMatch[0]);
         result = result.substring(0, idx) + insertHTML + result.substring(idx);
       } else {
-        result = result + insertHTML;
+        // Don't append at end — would land after the signature.
+        // If closing formula not found, template likely already has the description.
+        console.log('[HW24 Provider] Closing formula not found — skipping description insertion to avoid duplication after signature');
       }
     }
 
