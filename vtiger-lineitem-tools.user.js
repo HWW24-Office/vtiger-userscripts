@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.15
+// @version      2.7.16
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,8 +13,9 @@
 (async function () {
   'use strict';
 
-  // Keep this in sync with @version above.
-  const HW24_VERSION = '2.7.15';
+  const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
+    ? GM_info.script.version
+    : '2.7.16';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2735,6 +2736,7 @@
     const TOOLBAR_ID = 'hw24-email-toolbar';
     let savedEmailData = null; // for undo
     let perDuApplied = false;  // track if PerDu was applied (for Danke form)
+    let suppressContactStep1LangUntil = 0;
 
     /* ── Contact first name fetching ── */
     let cachedContactMeta = null;
@@ -3085,6 +3087,7 @@
 
     async function tryApplyStep1Language() {
       if (!hasAutoStep1Language) return;
+      if (Date.now() < suppressContactStep1LangUntil) return;
       const container = findStep1Container();
       if (!container) return;
 
@@ -3095,6 +3098,35 @@
       const targetLang = meta.lang || 'de';
 
       setLanguageInStep1(container, targetLang);
+    }
+
+    function installStep1LanguageIntentTracking() {
+      if (document.__hw24Step1IntentTrackingInstalled) return;
+      document.__hw24Step1IntentTrackingInstalled = true;
+
+      document.addEventListener('click', (event) => {
+        const el = event.target?.closest?.('button, a, input[type="button"], input[type="submit"]');
+        if (!el) return;
+
+        const id = S(el.id);
+        if (/^hw24-(provider|dealer)-btn-/i.test(id)) {
+          suppressContactStep1LangUntil = Date.now() + 180000;
+          console.log('[HW24] Step1 language from Contact temporarily disabled (provider/dealer flow)');
+          return;
+        }
+
+        const text = S(el.textContent || el.value || '').toLowerCase();
+        const title = S(el.getAttribute?.('title')).toLowerCase();
+        const className = S(el.className).toLowerCase();
+        const isEmailMakerMainButton =
+          /selectemailtemplates/.test(className)
+          || /send\s*email\s*with\s*emailmaker/.test(text)
+          || (/emailmaker/.test(title) && /(send|email|compose|verfassen)/.test(text || title));
+
+        if (isEmailMakerMainButton && event.isTrusted) {
+          suppressContactStep1LangUntil = 0;
+        }
+      }, true);
     }
 
     /* ── Email toolbar button config ── */
@@ -3852,6 +3884,7 @@
     /* ── MutationObserver to detect EMAILMaker Compose Email popup ── */
     function init() {
       console.log('[HW24] EMAILMakerTools: init for', currentModule);
+      installStep1LanguageIntentTracking();
 
       const scheduleRetries = () => {
         setTimeout(() => { injectContactMetaBadge(); tryApplyStep1Language(); }, 200);
