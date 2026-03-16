@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.11';
+  const HW24_VERSION = '2.7.12';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -474,6 +474,52 @@
       display: flex;
       align-items: center;
       justify-content: center;
+    }
+
+    /* ===== Contact Meta Chips ===== */
+    .hw24-contact-meta-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 8px;
+      vertical-align: middle;
+      flex-wrap: wrap;
+    }
+    .hw24-contact-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.5;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .hw24-contact-chip.lang-de {
+      background: #dbeafe;
+      color: #1d4ed8;
+      border-color: #93c5fd;
+    }
+    .hw24-contact-chip.lang-en {
+      background: #dcfce7;
+      color: #166534;
+      border-color: #86efac;
+    }
+    .hw24-contact-chip.optout-on {
+      background: #fee2e2;
+      color: #991b1b;
+      border-color: #fca5a5;
+    }
+    .hw24-contact-chip.optout-off {
+      background: #dcfce7;
+      color: #166534;
+      border-color: #86efac;
+    }
+    .hw24-contact-chip.optout-na {
+      background: #f1f5f9;
+      color: #475569;
+      border-color: #cbd5e1;
     }
   `;
 
@@ -2676,16 +2722,66 @@
      ═══════════════════════════════════════════════════════════════════════════ */
 
   const EMAILMakerTools = (function () {
-    const EMAIL_TOOL_MODULES = ['Quotes', 'SalesOrder', 'Potentials'];
+    const CONTACT_CONTEXT_MODULES = ['Quotes', 'SalesOrder', 'Potentials', 'Invoice', 'PurchaseOrder'];
+    const EMAIL_TOOLBAR_MODULES = ['Quotes', 'SalesOrder', 'Potentials'];
+    const STEP1_AUTO_LANG_MODULES = ['Quotes', 'SalesOrder', 'Invoice', 'PurchaseOrder'];
     const isSalesOrder = currentModule === 'SalesOrder';
-    if (!EMAIL_TOOL_MODULES.includes(currentModule) || !isDetail) return { init() {} };
+    if (!CONTACT_CONTEXT_MODULES.includes(currentModule) || !isDetail) return { init() {} };
+
+    const hasEmailToolbar = EMAIL_TOOLBAR_MODULES.includes(currentModule);
+    const hasAutoStep1Language = STEP1_AUTO_LANG_MODULES.includes(currentModule);
 
     const TOOLBAR_ID = 'hw24-email-toolbar';
     let savedEmailData = null; // for undo
     let perDuApplied = false;  // track if PerDu was applied (for Danke form)
 
     /* ── Contact first name fetching ── */
-    let cachedContactFirstName = null;
+    let cachedContactMeta = null;
+
+    function normalizeLabelText(text) {
+      return S(text).toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
+    function findFieldValueByLabel(doc, matcher) {
+      const idLabels = [...doc.querySelectorAll('[id*="_detailView_fieldLabel_"]')];
+      for (const labelEl of idLabels) {
+        const labelText = normalizeLabelText(labelEl.textContent);
+        if (!matcher(labelText)) continue;
+        const valueId = labelEl.id.replace('fieldLabel', 'fieldValue');
+        const valueEl = doc.getElementById(valueId);
+        const valueText = S(valueEl?.textContent || valueEl?.value);
+        if (valueText) return valueText;
+      }
+
+      const genericLabels = [...doc.querySelectorAll('td.fieldLabel, th.fieldLabel, .fieldLabel, label')];
+      for (const labelEl of genericLabels) {
+        const labelText = normalizeLabelText(labelEl.textContent);
+        if (!matcher(labelText)) continue;
+        const valueEl =
+          labelEl.nextElementSibling ||
+          labelEl.closest('tr')?.querySelector('td.fieldValue, .fieldValue') ||
+          labelEl.parentElement?.querySelector('.fieldValue');
+        const valueText = S(valueEl?.textContent || valueEl?.value);
+        if (valueText) return valueText;
+      }
+
+      return '';
+    }
+
+    function normalizeContactLanguage(rawLanguage) {
+      const txt = normalizeLabelText(rawLanguage);
+      if (/\b(en|english|englisch)\b/.test(txt)) return 'en';
+      if (/\b(de|deutsch|german)\b/.test(txt)) return 'de';
+      return 'de';
+    }
+
+    function normalizeEmailOptOut(rawValue) {
+      const txt = normalizeLabelText(rawValue);
+      if (!txt) return null;
+      if (/\b(yes|ja|true|1|on|aktiv|enabled|checked)\b|[✓✔]/.test(txt)) return true;
+      if (/\b(no|nein|false|0|off|deaktiv|disabled|not checked)\b|[✗✘]/.test(txt)) return false;
+      return null;
+    }
 
     function getContactId() {
       const link = document.querySelector('a[href*="module=Contacts&view=Detail"]');
@@ -2694,48 +2790,165 @@
       return m ? m[1] : null;
     }
 
-    async function fetchContactFirstName(contactId) {
-      if (!contactId) return '';
-      if (cachedContactFirstName !== null) return cachedContactFirstName;
+    async function fetchContactMeta(contactId) {
+      if (!contactId) return { firstName: '', lang: 'de', emailOptOut: null };
+      if (cachedContactMeta?.id === contactId) return cachedContactMeta;
       try {
         const r = await fetch(`index.php?module=Contacts&view=Detail&record=${contactId}`, { credentials: 'same-origin' });
         const html = await r.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
 
-        // Method 1: fieldLabel ID pattern (like VAT fetching)
-        const labels = [...doc.querySelectorAll('[id*="_detailView_fieldLabel_"]')];
-        const fnLabel = labels.find(l => {
-          const t = l.textContent.toLowerCase().trim();
-          return t === 'first name' || t === 'vorname' || t.includes('firstname');
-        });
-        if (fnLabel) {
-          const valueId = fnLabel.id.replace('fieldLabel', 'fieldValue');
-          const valueEl = doc.getElementById(valueId);
-          const val = (valueEl?.textContent || '').trim();
-          if (val) { cachedContactFirstName = val; return val; }
-        }
+        const firstName = findFieldValueByLabel(doc, txt => (
+          txt === 'first name' || txt === 'vorname' || txt.includes('firstname')
+        ));
 
-        // Method 2: fieldLabel CSS class fallback
-        const allLabels = [...doc.querySelectorAll('td.fieldLabel, .fieldLabel, label')];
-        const fnTd = allLabels.find(el => {
-          const t = el.textContent.toLowerCase().trim();
-          return t === 'first name' || t === 'vorname' || t.includes('firstname');
-        });
-        if (fnTd) {
-          const valueSibling = fnTd.nextElementSibling;
-          if (valueSibling) {
-            const val = valueSibling.textContent.trim();
-            if (val) { cachedContactFirstName = val; return val; }
-          }
-        }
+        const rawLanguage = findFieldValueByLabel(doc, txt => (
+          txt === 'language' || txt === 'sprache' || txt.includes('portal language') || txt.includes('language')
+        ));
 
-        cachedContactFirstName = '';
-        return '';
+        const rawEmailOptOut = findFieldValueByLabel(doc, txt => (
+          /email\s*opt\s*out|e-?mail\s*opt\s*out|opt\s*out/.test(txt)
+        ));
+
+        cachedContactMeta = {
+          id: contactId,
+          firstName: S(firstName),
+          lang: normalizeContactLanguage(rawLanguage),
+          emailOptOut: normalizeEmailOptOut(rawEmailOptOut),
+          rawLanguage: S(rawLanguage),
+          rawEmailOptOut: S(rawEmailOptOut)
+        };
+        return cachedContactMeta;
       } catch (e) {
-        console.error('HW24: Fehler beim Laden des Kontakt-Vornamens:', e);
-        cachedContactFirstName = '';
-        return '';
+        console.error('HW24: Fehler beim Laden der Kontakt-Metadaten:', e);
+        cachedContactMeta = { id: contactId, firstName: '', lang: 'de', emailOptOut: null };
+        return cachedContactMeta;
       }
+    }
+
+    async function fetchContactFirstName(contactId) {
+      const meta = await fetchContactMeta(contactId);
+      return meta.firstName || '';
+    }
+
+    function findContactLinkInCurrentView() {
+      const links = [...document.querySelectorAll('a[href*="module=Contacts&view=Detail"][href*="record="]')];
+      if (!links.length) return null;
+
+      const preferred = links.find(link =>
+        link.closest('#detailView, .detailViewContainer, .summaryView, .summaryViewEntries, .details')
+      );
+
+      return preferred || links[0];
+    }
+
+    function renderContactMetaChip(target, meta) {
+      const langLabel = meta.lang === 'en' ? 'EN' : 'DE';
+      const optOutLabel = meta.emailOptOut === true
+        ? 'Email Opt Out: ON'
+        : meta.emailOptOut === false
+          ? 'Email Opt Out: OFF'
+          : 'Email Opt Out: n/a';
+
+      const optOutClass = meta.emailOptOut === true
+        ? 'optout-on'
+        : meta.emailOptOut === false
+          ? 'optout-off'
+          : 'optout-na';
+
+      target.innerHTML = `
+        <span class="hw24-contact-chip ${meta.lang === 'en' ? 'lang-en' : 'lang-de'}">Lang: ${langLabel}</span>
+        <span class="hw24-contact-chip ${optOutClass}">${optOutLabel}</span>
+      `;
+    }
+
+    async function injectContactMetaBadge() {
+      const contactLink = findContactLinkInCurrentView();
+      if (!contactLink) return;
+
+      const contactId = getContactId();
+      if (!contactId) return;
+
+      const meta = await fetchContactMeta(contactId);
+
+      let wrap = document.getElementById('hw24-contact-meta-wrap');
+      if (!wrap) {
+        wrap = document.createElement('span');
+        wrap.id = 'hw24-contact-meta-wrap';
+        wrap.className = 'hw24-contact-meta-wrap';
+      }
+
+      renderContactMetaChip(wrap, meta);
+
+      if (contactLink.nextElementSibling !== wrap) {
+        contactLink.insertAdjacentElement('afterend', wrap);
+      }
+    }
+
+    function findStep1Container() {
+      const selectors = [
+        '.SendEmailFormStep1',
+        '#sendEmailFormStep1',
+        '.modelContainer',
+        '.modal.in',
+        '.modal.show',
+        '[role="dialog"]'
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        const hasCKEditor = el.querySelector('.cke, [id^="cke_"], .cke_editable');
+        if (hasCKEditor) continue;
+        const hasSelect = el.querySelector('select');
+        if (hasSelect) return el;
+      }
+      return null;
+    }
+
+    function setLanguageInStep1(container, lang) {
+      const jq = window.jQuery || window.$;
+      const wanted = lang === 'en' ? 'en' : 'de';
+      const languageMatcher = wanted === 'en'
+        ? /\b(en|english|englisch)\b/i
+        : /\b(de|deutsch|german)\b/i;
+
+      const selects = [...container.querySelectorAll('select')];
+      for (const sel of selects) {
+        const key = `${sel.name || ''} ${sel.id || ''}`.toLowerCase();
+        const options = [...sel.options];
+        const looksLikeLanguage = /lang|sprache|language/.test(key)
+          || (options.some(o => /\b(de|deutsch|german)\b/i.test(o.text))
+            && options.some(o => /\b(en|english|englisch)\b/i.test(o.text)));
+        if (!looksLikeLanguage) continue;
+
+        const target = options.find(o => languageMatcher.test(o.text) || S(o.value).toLowerCase() === wanted);
+        if (!target) continue;
+
+        sel.value = target.value;
+        fire(sel);
+        if (jq) {
+          try { jq(sel).val(target.value).trigger('change'); } catch { /* ignore */ }
+        }
+        container.dataset.hw24LangApplied = wanted;
+        console.log('[HW24] Step1 language set from Contact:', target.text);
+        return true;
+      }
+      return false;
+    }
+
+    async function tryApplyStep1Language() {
+      if (!hasAutoStep1Language) return;
+      const container = findStep1Container();
+      if (!container) return;
+
+      const contactId = getContactId();
+      if (!contactId) return;
+
+      const meta = await fetchContactMeta(contactId);
+      const targetLang = meta.lang || 'de';
+
+      if (container.dataset.hw24LangApplied === targetLang) return;
+      setLanguageInStep1(container, targetLang);
     }
 
     /* ── Email toolbar button config ── */
@@ -3409,6 +3622,7 @@
 
     /* ── Inject toolbar into the Compose Email container ── */
     function injectEmailToolbar(container) {
+      if (!hasEmailToolbar) return;
       if (document.getElementById(TOOLBAR_ID)) return;
       console.log('[HW24] EMAILMakerTools: injecting toolbar into', container.className || container.id || container.tagName);
 
@@ -3480,6 +3694,7 @@
 
     /* ── Check if the Compose Email form is present and ready ── */
     function tryInjectToolbar() {
+      if (!hasEmailToolbar) return;
       if (document.getElementById(TOOLBAR_ID)) return;
 
       const container = findComposeContainer();
@@ -3493,12 +3708,20 @@
       console.log('[HW24] EMAILMakerTools: init for', currentModule);
 
       const scheduleRetries = () => {
+        setTimeout(() => { injectContactMetaBadge(); tryApplyStep1Language(); }, 200);
+        setTimeout(() => { injectContactMetaBadge(); tryApplyStep1Language(); }, 500);
         setTimeout(tryInjectToolbar, 300);
+        setTimeout(() => { injectContactMetaBadge(); tryApplyStep1Language(); }, 900);
         setTimeout(tryInjectToolbar, 800);
+        setTimeout(() => { injectContactMetaBadge(); tryApplyStep1Language(); }, 1500);
         setTimeout(tryInjectToolbar, 1500);
         setTimeout(tryInjectToolbar, 3000);
+        setTimeout(() => { injectContactMetaBadge(); tryApplyStep1Language(); }, 3200);
         setTimeout(tryInjectToolbar, 5000);
       };
+
+      injectContactMetaBadge();
+      tryApplyStep1Language();
 
       const observer = new MutationObserver(mutations => {
         for (const mutation of mutations) {
@@ -3536,7 +3759,9 @@
 
       // Fallback: periodic poll every 2s (catches edge cases the observer misses)
       const poll = setInterval(() => {
-        if (document.getElementById(TOOLBAR_ID)) return;
+        injectContactMetaBadge();
+        tryApplyStep1Language();
+        if (hasEmailToolbar && document.getElementById(TOOLBAR_ID)) return;
         tryInjectToolbar();
       }, 2000);
       // Stop polling after 10 minutes
