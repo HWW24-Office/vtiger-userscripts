@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.11
+// @version      2.7.14
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -13,7 +13,8 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.13';
+  // Keep this in sync with @version above.
+  const HW24_VERSION = '2.7.14';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2724,7 +2725,7 @@
   const EMAILMakerTools = (function () {
     const CONTACT_CONTEXT_MODULES = ['Quotes', 'SalesOrder', 'Potentials', 'Invoice', 'PurchaseOrder'];
     const EMAIL_TOOLBAR_MODULES = ['Quotes', 'SalesOrder', 'Potentials'];
-    const STEP1_AUTO_LANG_MODULES = ['Quotes', 'SalesOrder', 'Invoice', 'PurchaseOrder'];
+    const STEP1_AUTO_LANG_MODULES = ['Quotes', 'SalesOrder', 'Potentials', 'Invoice', 'PurchaseOrder'];
     const isSalesOrder = currentModule === 'SalesOrder';
     if (!CONTACT_CONTEXT_MODULES.includes(currentModule) || !isDetail) return { init() {} };
 
@@ -2974,8 +2975,7 @@
         if (!el) continue;
         const hasCKEditor = el.querySelector('.cke, [id^="cke_"], .cke_editable');
         if (hasCKEditor) continue;
-        const hasSelect = el.querySelector('select');
-        if (hasSelect) return el;
+        if (el.querySelector('select, input, button')) return el;
       }
       return null;
     }
@@ -3008,6 +3008,64 @@
         console.log('[HW24] Step1 language set from Contact:', target.text);
         return true;
       }
+
+      // Fallback 1: any select with DE/EN options even without lang-like name
+      for (const sel of selects) {
+        const options = [...sel.options];
+        const hasDe = options.some(o => /\b(de|deutsch|german)\b/i.test(o.text));
+        const hasEn = options.some(o => /\b(en|english|englisch)\b/i.test(o.text));
+        if (!hasDe || !hasEn) continue;
+
+        const target = options.find(o => languageMatcher.test(o.text) || S(o.value).toLowerCase() === wanted);
+        if (!target) continue;
+
+        sel.value = target.value;
+        fire(sel);
+        if (jq) {
+          try { jq(sel).val(target.value).trigger('change'); } catch { /* ignore */ }
+        }
+        container.dataset.hw24LangApplied = wanted;
+        console.log('[HW24] Step1 language set via broad select match:', target.text);
+        return true;
+      }
+
+      // Fallback 2: hidden/text input fields that store selected language code
+      const inputs = [...container.querySelectorAll('input[type="hidden"], input[type="text"], input:not([type])')];
+      for (const input of inputs) {
+        const key = `${input.name || ''} ${input.id || ''}`.toLowerCase();
+        if (!/lang|sprache|language/.test(key)) continue;
+        input.value = wanted;
+        fire(input);
+        if (jq) {
+          try { jq(input).val(wanted).trigger('change'); } catch { /* ignore */ }
+        }
+        container.dataset.hw24LangApplied = wanted;
+        console.log('[HW24] Step1 language set via input fallback:', wanted);
+        return true;
+      }
+
+      // Fallback 3: select2 widgets with language text in rendered container
+      if (jq) {
+        try {
+          let done = false;
+          jq(container).find('select').each(function () {
+            const $sel = jq(this);
+            const options = this.options ? [...this.options] : [];
+            const target = options.find(o => languageMatcher.test(o.text) || S(o.value).toLowerCase() === wanted);
+            if (!target) return;
+            $sel.val(target.value).trigger('change');
+            done = true;
+            return false;
+          });
+          if (done) {
+            container.dataset.hw24LangApplied = wanted;
+            console.log('[HW24] Step1 language set via Select2 fallback:', wanted);
+            return true;
+          }
+        } catch { /* ignore */ }
+      }
+
+      console.log('[HW24] Step1 language selector not found yet');
       return false;
     }
 
