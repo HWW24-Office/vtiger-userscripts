@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.14
+// @version      2.7.15
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -14,7 +14,7 @@
   'use strict';
 
   // Keep this in sync with @version above.
-  const HW24_VERSION = '2.7.14';
+  const HW24_VERSION = '2.7.15';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2962,6 +2962,14 @@
     }
 
     function findStep1Container() {
+      const isVisible = (el) => {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
       const selectors = [
         '.SendEmailFormStep1',
         '#sendEmailFormStep1',
@@ -2970,12 +2978,18 @@
         '.modal.show',
         '[role="dialog"]'
       ];
+
+      const seen = new Set();
       for (const sel of selectors) {
-        const el = document.querySelector(sel);
-        if (!el) continue;
-        const hasCKEditor = el.querySelector('.cke, [id^="cke_"], .cke_editable');
-        if (hasCKEditor) continue;
-        if (el.querySelector('select, input, button')) return el;
+        const els = [...document.querySelectorAll(sel)];
+        for (const el of els) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          if (!isVisible(el)) continue;
+          const hasCKEditor = el.querySelector('.cke, [id^="cke_"], .cke_editable');
+          if (hasCKEditor) continue;
+          if (el.querySelector('select, input, button')) return el;
+        }
       }
       return null;
     }
@@ -3080,7 +3094,6 @@
       const meta = await fetchContactMeta(contactId);
       const targetLang = meta.lang || 'de';
 
-      if (container.dataset.hw24LangApplied === targetLang) return;
       setLanguageInStep1(container, targetLang);
     }
 
