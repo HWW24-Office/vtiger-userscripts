@@ -13,7 +13,7 @@
 (async function () {
   'use strict';
 
-  const HW24_VERSION = '2.7.12';
+  const HW24_VERSION = '2.7.13';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2796,6 +2796,16 @@
       const uncheckedIcon = node.querySelector?.('.fa-times, .fa-close, .fa-ban, .fa-minus, .glyphicon-remove');
       if (uncheckedIcon) return false;
 
+      const attrsToInspect = ['data-value', 'value', 'title', 'aria-label', 'aria-checked'];
+      for (const attr of attrsToInspect) {
+        const val = node.getAttribute?.(attr);
+        const parsed = normalizeEmailOptOut(val || '');
+        if (parsed !== null) return parsed;
+      }
+
+      const classParsed = normalizeEmailOptOut(node.className || '');
+      if (classParsed !== null) return classParsed;
+
       const fromText = normalizeEmailOptOut(node.textContent || node.value || '');
       if (fromText !== null) return fromText;
 
@@ -2819,6 +2829,27 @@
       const fromRaw = normalizeEmailOptOut(rawEmailOptOutText);
       if (fromRaw !== null) return fromRaw;
 
+      return null;
+    }
+
+    async function fetchEmailOptOutFromEditView(contactId) {
+      if (!contactId) return null;
+      try {
+        const r = await fetch(`index.php?module=Contacts&view=Edit&record=${contactId}`, { credentials: 'same-origin' });
+        const html = await r.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const checkbox = doc.querySelector('input[name="emailoptout"][type="checkbox"], input[id*="emailoptout"][type="checkbox"]');
+        if (checkbox) return !!checkbox.checked;
+
+        const hidden = doc.querySelector('input[name="emailoptout"][type="hidden"], input[id*="emailoptout"][type="hidden"]');
+        if (hidden) {
+          const parsed = normalizeEmailOptOut(hidden.value || '');
+          if (parsed !== null) return parsed;
+        }
+      } catch (e) {
+        console.warn('[HW24] Email Opt Out fallback via Edit view failed:', e);
+      }
       return null;
     }
 
@@ -2849,11 +2880,16 @@
           /email\s*opt\s*out|e-?mail\s*opt\s*out|opt\s*out/.test(txt)
         ));
 
+        let emailOptOut = resolveEmailOptOut(doc, rawEmailOptOut);
+        if (emailOptOut === null) {
+          emailOptOut = await fetchEmailOptOutFromEditView(contactId);
+        }
+
         cachedContactMeta = {
           id: contactId,
           firstName: S(firstName),
           lang: normalizeContactLanguage(rawLanguage),
-          emailOptOut: resolveEmailOptOut(doc, rawEmailOptOut),
+          emailOptOut,
           rawLanguage: S(rawLanguage),
           rawEmailOptOut: S(rawEmailOptOut)
         };
