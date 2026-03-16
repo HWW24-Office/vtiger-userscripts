@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.17
+// @version      2.7.18
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.17';
+    : '2.7.18';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2856,10 +2856,51 @@
       return null;
     }
 
+    function isVisible(el) {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }
+
+    function getContactIdFromLink(link) {
+      const href = link?.getAttribute?.('href') || '';
+      const m = href.match(/record=(\d+)/);
+      return m ? m[1] : null;
+    }
+
+    function findContactLinksInCurrentView() {
+      const selectors = [
+        '[id$="_fieldValue_contact_id"] a[href*="module=Contacts&view=Detail"][href*="record="]',
+        '[id*="_fieldValue_contact_id"] a[href*="module=Contacts&view=Detail"][href*="record="]',
+        '[data-name="contact_id"] a[href*="module=Contacts&view=Detail"][href*="record="]',
+        'a[href*="module=Contacts&view=Detail"][href*="record="]'
+      ];
+
+      const out = [];
+      const seen = new Set();
+      for (const sel of selectors) {
+        for (const link of document.querySelectorAll(sel)) {
+          if (seen.has(link)) continue;
+          seen.add(link);
+          if (!isVisible(link)) continue;
+          out.push(link);
+        }
+      }
+      return out;
+    }
+
     function getContactId() {
-      const link = document.querySelector('a[href*="module=Contacts&view=Detail"]');
-      if (!link) return null;
-      const m = link.getAttribute('href').match(/record=(\d+)/);
+      const links = findContactLinksInCurrentView();
+      for (const link of links) {
+        const id = getContactIdFromLink(link);
+        if (id) return id;
+      }
+
+      const input = document.querySelector('input[name="contact_id"], input[name="contactid"], input[id*="contact_id"], input[id*="contactid"]');
+      const val = S(input?.value);
+      const m = val.match(/(\d+)/);
       return m ? m[1] : null;
     }
 
@@ -2909,17 +2950,6 @@
       return meta.firstName || '';
     }
 
-    function findContactLinkInCurrentView() {
-      const links = [...document.querySelectorAll('a[href*="module=Contacts&view=Detail"][href*="record="]')];
-      if (!links.length) return null;
-
-      const preferred = links.find(link =>
-        link.closest('#detailView, .detailViewContainer, .summaryView, .summaryViewEntries, .details')
-      );
-
-      return preferred || links[0];
-    }
-
     function renderContactMetaChip(target, meta) {
       const langLabel = meta.lang === 'en' ? 'EN' : 'DE';
       const optOutLabel = meta.emailOptOut === true
@@ -2941,25 +2971,22 @@
     }
 
     async function injectContactMetaBadge() {
-      const contactLink = findContactLinkInCurrentView();
-      if (!contactLink) return;
+      const contactLinks = findContactLinksInCurrentView();
+      if (!contactLinks.length) return;
 
       const contactId = getContactId();
       if (!contactId) return;
 
       const meta = await fetchContactMeta(contactId);
 
-      let wrap = document.getElementById('hw24-contact-meta-wrap');
-      if (!wrap) {
-        wrap = document.createElement('span');
-        wrap.id = 'hw24-contact-meta-wrap';
-        wrap.className = 'hw24-contact-meta-wrap';
-      }
-
-      renderContactMetaChip(wrap, meta);
-
-      if (contactLink.nextElementSibling !== wrap) {
-        contactLink.insertAdjacentElement('afterend', wrap);
+      for (const contactLink of contactLinks) {
+        let wrap = contactLink.nextElementSibling;
+        if (!wrap || !wrap.classList?.contains('hw24-contact-meta-wrap')) {
+          wrap = document.createElement('span');
+          wrap.className = 'hw24-contact-meta-wrap';
+          contactLink.insertAdjacentElement('afterend', wrap);
+        }
+        renderContactMetaChip(wrap, meta);
       }
     }
 
