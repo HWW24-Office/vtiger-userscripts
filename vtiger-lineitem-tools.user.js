@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.18
+// @version      2.7.19
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.18';
+    : '2.7.19';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2870,31 +2870,44 @@
       return m ? m[1] : null;
     }
 
-    function findContactLinksInCurrentView() {
-      const selectors = [
-        '[id$="_fieldValue_contact_id"] a[href*="module=Contacts&view=Detail"][href*="record="]',
-        '[id*="_fieldValue_contact_id"] a[href*="module=Contacts&view=Detail"][href*="record="]',
-        '[data-name="contact_id"] a[href*="module=Contacts&view=Detail"][href*="record="]',
-        'a[href*="module=Contacts&view=Detail"][href*="record="]'
+    function findContactTargetsInCurrentView() {
+      const containerSelectors = [
+        '[id$="_fieldValue_contact_id"]',
+        '[id*="_fieldValue_contact_id"]',
+        '[data-name="contact_id"]',
+        '[data-field-name="contact_id"]',
+        '[name="contact_id"]'
       ];
 
-      const out = [];
-      const seen = new Set();
-      for (const sel of selectors) {
-        for (const link of document.querySelectorAll(sel)) {
-          if (seen.has(link)) continue;
-          seen.add(link);
-          if (!isVisible(link)) continue;
-          out.push(link);
+      const targets = [];
+      const seenHosts = new Set();
+
+      for (const sel of containerSelectors) {
+        for (const host of document.querySelectorAll(sel)) {
+          if (seenHosts.has(host)) continue;
+          seenHosts.add(host);
+          if (!isVisible(host)) continue;
+          const link = host.querySelector('a[href*="module=Contacts&view=Detail"][href*="record="]');
+          targets.push({ host, link: link || null, contactId: getContactIdFromLink(link) });
         }
       }
-      return out;
+
+      // Fallback: direct contact links not covered by known field containers
+      for (const link of document.querySelectorAll('a[href*="module=Contacts&view=Detail"][href*="record="]')) {
+        if (!isVisible(link)) continue;
+        const host = link.parentElement || link;
+        if (seenHosts.has(host)) continue;
+        seenHosts.add(host);
+        targets.push({ host, link, contactId: getContactIdFromLink(link) });
+      }
+
+      return targets;
     }
 
     function getContactId() {
-      const links = findContactLinksInCurrentView();
-      for (const link of links) {
-        const id = getContactIdFromLink(link);
+      const targets = findContactTargetsInCurrentView();
+      for (const t of targets) {
+        const id = S(t.contactId);
         if (id) return id;
       }
 
@@ -2971,20 +2984,29 @@
     }
 
     async function injectContactMetaBadge() {
-      const contactLinks = findContactLinksInCurrentView();
-      if (!contactLinks.length) return;
+      const targets = findContactTargetsInCurrentView();
+      if (!targets.length) return;
 
       const contactId = getContactId();
       if (!contactId) return;
 
       const meta = await fetchContactMeta(contactId);
 
-      for (const contactLink of contactLinks) {
-        let wrap = contactLink.nextElementSibling;
+      for (const t of targets) {
+        const anchor = t.link;
+        const host = t.host;
+
+        let wrap = anchor ? anchor.nextElementSibling : host.querySelector(':scope > .hw24-contact-meta-wrap');
         if (!wrap || !wrap.classList?.contains('hw24-contact-meta-wrap')) {
           wrap = document.createElement('span');
           wrap.className = 'hw24-contact-meta-wrap';
-          contactLink.insertAdjacentElement('afterend', wrap);
+          if (!anchor) {
+            wrap.style.marginLeft = '0';
+            wrap.style.marginTop = '4px';
+            wrap.style.display = 'inline-flex';
+          }
+          if (anchor) anchor.insertAdjacentElement('afterend', wrap);
+          else host.appendChild(wrap);
         }
         renderContactMetaChip(wrap, meta);
       }
