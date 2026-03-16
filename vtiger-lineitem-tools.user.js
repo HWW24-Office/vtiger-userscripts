@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.16
+// @version      2.7.17
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.16';
+    : '2.7.17';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2726,7 +2726,7 @@
   const EMAILMakerTools = (function () {
     const CONTACT_CONTEXT_MODULES = ['Quotes', 'SalesOrder', 'Potentials', 'Invoice', 'PurchaseOrder'];
     const EMAIL_TOOLBAR_MODULES = ['Quotes', 'SalesOrder', 'Potentials'];
-    const STEP1_AUTO_LANG_MODULES = ['Quotes', 'SalesOrder', 'Potentials', 'Invoice', 'PurchaseOrder'];
+    const STEP1_AUTO_LANG_MODULES = ['Quotes', 'SalesOrder', 'Potentials', 'Invoice'];
     const isSalesOrder = currentModule === 'SalesOrder';
     if (!CONTACT_CONTEXT_MODULES.includes(currentModule) || !isDetail) return { init() {} };
 
