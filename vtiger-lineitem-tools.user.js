@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.19
+// @version      2.7.20
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.19';
+    : '2.7.20';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -2996,7 +2996,14 @@
         const anchor = t.link;
         const host = t.host;
 
-        let wrap = anchor ? anchor.nextElementSibling : host.querySelector(':scope > .hw24-contact-meta-wrap');
+        // Summary view often wraps the contact link in an overflow-ellipsis span.
+        // Insert chips after that wrapper to avoid clipping by overflow:hidden.
+        const clippedWrapper = anchor?.closest?.('.value.textOverflowEllipsis, .value, .fieldValue .value');
+        const insertAfterEl = clippedWrapper || anchor;
+
+        let wrap = insertAfterEl
+          ? insertAfterEl.nextElementSibling
+          : host.querySelector(':scope > .hw24-contact-meta-wrap');
         if (!wrap || !wrap.classList?.contains('hw24-contact-meta-wrap')) {
           wrap = document.createElement('span');
           wrap.className = 'hw24-contact-meta-wrap';
@@ -3005,7 +3012,7 @@
             wrap.style.marginTop = '4px';
             wrap.style.display = 'inline-flex';
           }
-          if (anchor) anchor.insertAdjacentElement('afterend', wrap);
+          if (insertAfterEl) insertAfterEl.insertAdjacentElement('afterend', wrap);
           else host.appendChild(wrap);
         }
         renderContactMetaChip(wrap, meta);
