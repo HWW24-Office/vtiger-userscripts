@@ -2783,6 +2783,45 @@
       return null;
     }
 
+    function parseEmailOptOutFromNode(node) {
+      if (!node) return null;
+
+      const checkbox = node.matches?.('input[type="checkbox"]')
+        ? node
+        : node.querySelector?.('input[type="checkbox"]');
+      if (checkbox) return !!checkbox.checked;
+
+      const checkedIcon = node.querySelector?.('.fa-check, .fa-check-square, .fa-check-circle, .glyphicon-ok');
+      if (checkedIcon) return true;
+      const uncheckedIcon = node.querySelector?.('.fa-times, .fa-close, .fa-ban, .fa-minus, .glyphicon-remove');
+      if (uncheckedIcon) return false;
+
+      const fromText = normalizeEmailOptOut(node.textContent || node.value || '');
+      if (fromText !== null) return fromText;
+
+      return null;
+    }
+
+    function resolveEmailOptOut(doc, rawEmailOptOutText) {
+      const candidates = [
+        doc.getElementById('Contacts_detailView_fieldValue_emailoptout'),
+        doc.querySelector('[id$="_fieldValue_emailoptout"]'),
+        doc.querySelector('[id*="_fieldValue_emailoptout"]'),
+        doc.querySelector('[data-name="emailoptout"]'),
+        doc.querySelector('input[name="emailoptout"]')
+      ].filter(Boolean);
+
+      for (const node of candidates) {
+        const parsed = parseEmailOptOutFromNode(node);
+        if (parsed !== null) return parsed;
+      }
+
+      const fromRaw = normalizeEmailOptOut(rawEmailOptOutText);
+      if (fromRaw !== null) return fromRaw;
+
+      return null;
+    }
+
     function getContactId() {
       const link = document.querySelector('a[href*="module=Contacts&view=Detail"]');
       if (!link) return null;
@@ -2814,7 +2853,7 @@
           id: contactId,
           firstName: S(firstName),
           lang: normalizeContactLanguage(rawLanguage),
-          emailOptOut: normalizeEmailOptOut(rawEmailOptOut),
+          emailOptOut: resolveEmailOptOut(doc, rawEmailOptOut),
           rawLanguage: S(rawLanguage),
           rawEmailOptOut: S(rawEmailOptOut)
         };
@@ -2857,7 +2896,7 @@
           : 'optout-na';
 
       target.innerHTML = `
-        <span class="hw24-contact-chip ${meta.lang === 'en' ? 'lang-en' : 'lang-de'}">Lang: ${langLabel}</span>
+        <span class="hw24-contact-chip ${meta.lang === 'en' ? 'lang-en' : 'lang-de'}">${langLabel}</span>
         <span class="hw24-contact-chip ${optOutClass}">${optOutLabel}</span>
       `;
     }
