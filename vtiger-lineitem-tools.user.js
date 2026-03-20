@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.21
+// @version      2.7.22
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.21';
+    : '2.7.22';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -3167,6 +3167,7 @@
       if (Date.now() < suppressContactStep1LangUntil) return;
       const container = findStep1Container();
       if (!container) return;
+      if (container.dataset.hw24LangAutoDone === '1') return;
       if (container.dataset.hw24LangManualOverride === '1') return;
 
       const contactId = getContactId();
@@ -3175,7 +3176,10 @@
       const meta = await fetchContactMeta(contactId);
       const targetLang = meta.lang || 'de';
 
-      setLanguageInStep1(container, targetLang);
+      const applied = setLanguageInStep1(container, targetLang);
+      if (applied) {
+        container.dataset.hw24LangAutoDone = '1';
+      }
     }
 
     function installStep1LanguageIntentTracking() {
