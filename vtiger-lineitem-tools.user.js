@@ -3052,6 +3052,30 @@
       return null;
     }
 
+    function getStep1LanguageFieldInfo(field) {
+      if (!field) return null;
+      const tag = S(field.tagName).toLowerCase();
+      const key = `${field.name || ''} ${field.id || ''}`.toLowerCase();
+
+      if (tag === 'select') {
+        const options = [...(field.options || [])];
+        const hasDe = options.some(o => /\b(de|deutsch|german)\b/i.test(o.text));
+        const hasEn = options.some(o => /\b(en|english|englisch)\b/i.test(o.text));
+        const looksLikeLanguage = /lang|sprache|language/.test(key) || (hasDe && hasEn);
+        if (!looksLikeLanguage) return null;
+        return { field, tag, key, options };
+      }
+
+      if (tag === 'input') {
+        const type = S(field.type || '').toLowerCase();
+        if (type && !['hidden', 'text'].includes(type)) return null;
+        if (!/lang|sprache|language/.test(key)) return null;
+        return { field, tag, key, options: [] };
+      }
+
+      return null;
+    }
+
     function setLanguageInStep1(container, lang) {
       const jq = window.jQuery || window.$;
       const wanted = lang === 'en' ? 'en' : 'de';
@@ -3061,12 +3085,9 @@
 
       const selects = [...container.querySelectorAll('select')];
       for (const sel of selects) {
-        const key = `${sel.name || ''} ${sel.id || ''}`.toLowerCase();
-        const options = [...sel.options];
-        const looksLikeLanguage = /lang|sprache|language/.test(key)
-          || (options.some(o => /\b(de|deutsch|german)\b/i.test(o.text))
-            && options.some(o => /\b(en|english|englisch)\b/i.test(o.text)));
-        if (!looksLikeLanguage) continue;
+        const info = getStep1LanguageFieldInfo(sel);
+        if (!info) continue;
+        const options = info.options;
 
         const target = options.find(o => languageMatcher.test(o.text) || S(o.value).toLowerCase() === wanted);
         if (!target) continue;
@@ -3104,8 +3125,8 @@
       // Fallback 2: hidden/text input fields that store selected language code
       const inputs = [...container.querySelectorAll('input[type="hidden"], input[type="text"], input:not([type])')];
       for (const input of inputs) {
-        const key = `${input.name || ''} ${input.id || ''}`.toLowerCase();
-        if (!/lang|sprache|language/.test(key)) continue;
+        const info = getStep1LanguageFieldInfo(input);
+        if (!info) continue;
         input.value = wanted;
         fire(input);
         if (jq) {
@@ -3146,6 +3167,7 @@
       if (Date.now() < suppressContactStep1LangUntil) return;
       const container = findStep1Container();
       if (!container) return;
+      if (container.dataset.hw24LangManualOverride === '1') return;
 
       const contactId = getContactId();
       if (!contactId) return;
@@ -3159,6 +3181,21 @@
     function installStep1LanguageIntentTracking() {
       if (document.__hw24Step1IntentTrackingInstalled) return;
       document.__hw24Step1IntentTrackingInstalled = true;
+
+      document.addEventListener('change', (event) => {
+        const target = event.target;
+        if (!event.isTrusted || !target) return;
+
+        const container = target.closest?.('.SendEmailFormStep1, #sendEmailFormStep1, .modelContainer, .modal.in, .modal.show, [role="dialog"]');
+        if (!container) return;
+
+        const info = getStep1LanguageFieldInfo(target);
+        if (!info) return;
+
+        container.dataset.hw24LangManualOverride = '1';
+        container.dataset.hw24LangUserValue = S(target.value || '').toLowerCase();
+        console.log('[HW24] Step1 language manual override detected; keeping user selection');
+      }, true);
 
       document.addEventListener('click', (event) => {
         const el = event.target?.closest?.('button, a, input[type="button"], input[type="submit"]');
