@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.24
+// @version      2.7.25
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.24';
+    : '2.7.25';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1677,10 +1677,47 @@
           } else {
             el.dispatchEvent(new Event('change', { bubbles: true }));
           }
+          triggerTaxRegionRecalculation(el);
           return true;
         }
       }
       return false;
+    }
+
+    function triggerTaxRegionRecalculation(el = document.querySelector('#region_id')) {
+      if (!el) return;
+
+      const jq = window.jQuery || window.$;
+      ['input', 'change', 'blur'].forEach(evt => {
+        el.dispatchEvent(new Event(evt, { bubbles: true }));
+      });
+
+      if (jq) {
+        try {
+          const $el = jq(el);
+          $el.trigger('change');
+          $el.trigger('change.select2');
+          $el.trigger({ type: 'select2:select', params: { data: { id: el.value, text: el.options?.[el.selectedIndex]?.textContent || '' } } });
+        } catch { /* ignore */ }
+      }
+
+      const instance = (() => {
+        try {
+          if (window.Inventory_Edit_Js?.getInstance) return window.Inventory_Edit_Js.getInstance();
+        } catch { /* ignore */ }
+        return null;
+      })();
+
+      const invoke = (ctx, fnName) => {
+        try {
+          if (ctx && typeof ctx[fnName] === 'function') ctx[fnName]();
+        } catch { /* ignore */ }
+      };
+
+      ['calculateTax', 'calculateValues', 'calculateFinalValues', 'lineItemToTalResultCalculations'].forEach(fn => {
+        invoke(instance, fn);
+        invoke(window.Inventory_Edit_Js, fn);
+      });
     }
 
     function findReverseChargeCheckbox() {
@@ -1749,7 +1786,8 @@
 
       const billingCountry = getBillingCountry();
       const taxRegion = getTaxRegion();
-      const reverseCharge = getReverseCharge();
+      const reverseChargeFieldExists = !!findReverseChargeCheckbox();
+      const reverseCharge = reverseChargeFieldExists ? getReverseCharge() : false;
       const nichtSteuerbar = getNichtSteuerbar();
       const subjectType = getSubjectType();
       const isPurchaseOrderModule = currentModule === 'PurchaseOrder';
@@ -1781,7 +1819,7 @@
             fixLabel: 'Tax Region → Austria'
           });
         }
-        if (reverseCharge) {
+        if (reverseChargeFieldExists && reverseCharge) {
           issues.push({
             type: 'error',
             message: '⚠️ Reverse Charge darf bei österreichischen Kunden nicht aktiviert sein.',
@@ -1814,7 +1852,7 @@
               fixLabel: 'Tax Region → EU'
             });
           }
-          if (!reverseCharge) {
+          if (reverseChargeFieldExists && !reverseCharge) {
             issues.push({
               type: 'error',
               message: '⚠️ Purchase Order (DE/EU) → Reverse Charge muss aktiviert sein (UID irrelevant).',
@@ -1842,7 +1880,7 @@
               fixLabel: 'Tax Region → EU'
             });
           }
-          if (!reverseCharge) {
+          if (reverseChargeFieldExists && !reverseCharge) {
             issues.push({
               type: 'error',
               message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Reverse Charge muss aktiviert sein.`,
@@ -1870,7 +1908,7 @@
               fixLabel: 'Tax Region → Austria'
             });
           }
-          if (reverseCharge) {
+          if (reverseChargeFieldExists && reverseCharge) {
             issues.push({
               type: 'error',
               message: '⚠️ Reverse Charge darf bei EU-Kunden ohne UID nicht aktiviert sein.',
@@ -1909,7 +1947,7 @@
             fixLabel: 'Nicht steuerbar aktivieren'
           });
         }
-        if (reverseCharge) {
+        if (reverseChargeFieldExists && reverseCharge) {
           issues.push({
             type: 'error',
             message: '⚠️ Reverse Charge ist bei Drittland-Kunden nicht anwendbar.',
@@ -1931,7 +1969,7 @@
             fixLabel: 'Tax Region → Non-EU'
           });
         }
-        if (reverseCharge) {
+        if (reverseChargeFieldExists && reverseCharge) {
           issues.push({
             type: 'error',
             message: '⚠️ Reverse Charge ist bei Drittland-Kunden nicht anwendbar.',
@@ -1986,6 +2024,32 @@
     let saveInterceptorInstalled = false;
     let skipValidation = false;
 
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    async function applyIssuesAndSave(issues, btn) {
+      const taxRegionBefore = getTaxRegion();
+      let touchedTaxRegion = false;
+
+      issues.forEach(issue => {
+        if (/tax\s*region/i.test(S(issue.fixLabel))) touchedTaxRegion = true;
+        issue.fix?.();
+      });
+
+      const taxRegionAfter = getTaxRegion();
+      if (touchedTaxRegion || (taxRegionBefore && taxRegionAfter && taxRegionBefore !== taxRegionAfter)) {
+        const regionEl = document.querySelector('#region_id');
+        if (regionEl) {
+          for (const delay of [0, 120, 350, 800]) {
+            if (delay) await sleep(delay);
+            triggerTaxRegionRecalculation(regionEl);
+          }
+          await sleep(450);
+        }
+      }
+
+      triggerSave(btn);
+    }
+
     function interceptSaveButton() {
       if (!isEdit || saveInterceptorInstalled) return;
 
@@ -2003,8 +2067,7 @@
           const issues = await validateTaxSettings();
           if (issues && issues.length > 0) {
             showTaxValidationPopup(issues,
-              // Fix: Timeout auf 500ms erhöht für vtiger Tax-Rekalkulierung
-              () => { issues.forEach(issue => issue.fix?.()); setTimeout(() => triggerSave(btn), 500); },
+              () => { applyIssuesAndSave(issues, btn); },
               () => { triggerSave(btn); }
             );
           } else {
