@@ -135,5 +135,8 @@
         "Aruba"
       ]
     }
-  ]
+  ],
+  "last_checked_at": "2026-03-24",
+  "source_reachable": false,
+  "refresh_note": "Source could not be reached in monthly check."
 }
