@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.6.4
+// @version      1.6.5
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.6.4';
+  const HW24_VERSION = '1.6.5';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -753,7 +753,7 @@
 
   const REMOTE_MATRIX_BASE_URL = 'https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/';
   const REMOTE_MATRIX_FILES = {
-    PP: 'parkplace-supported-products-detailed.json',
+    PP: 'parkplace-supported-products.json',
     TG: 'evernex-supported-products.json',
     ITRIS: 'itris-supported-products.json',
     DIS: 'dis-supported-products.json',
@@ -763,6 +763,7 @@
   const MATRIX_CACHE_PREFIX = 'hw24:providerMatrix:';
   const MATRIX_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const loadedRemoteCatalogs = Object.create(null);
+  const loadedRemoteCatalogMeta = Object.create(null);
 
   function normalizeForMatrix(text) {
     return (text || '')
@@ -840,6 +841,7 @@
     const fileName = REMOTE_MATRIX_FILES[providerKey];
     if (!fileName) {
       loadedRemoteCatalogs[providerKey] = null;
+      loadedRemoteCatalogMeta[providerKey] = null;
       return null;
     }
 
@@ -852,6 +854,11 @@
       if (isFresh && cached.data) {
         const parsed = parseRemoteCatalog(cached.data);
         loadedRemoteCatalogs[providerKey] = parsed;
+        loadedRemoteCatalogMeta[providerKey] = {
+          fileName,
+          capturedAt: cached.data?.captured_at || '',
+          loadedFrom: 'cache'
+        };
         return parsed;
       }
     } catch {}
@@ -869,10 +876,16 @@
       } catch {}
 
       loadedRemoteCatalogs[providerKey] = parsed;
+      loadedRemoteCatalogMeta[providerKey] = {
+        fileName,
+        capturedAt: data?.captured_at || '',
+        loadedFrom: 'network'
+      };
       return parsed;
     } catch (err) {
       console.warn('[HW24 Matrix] Remote catalog load failed for', providerKey, err?.message || err);
       loadedRemoteCatalogs[providerKey] = null;
+      loadedRemoteCatalogMeta[providerKey] = null;
       return null;
     }
   }
@@ -997,11 +1010,13 @@
     if (Array.isArray(remoteCatalog) && remoteCatalog.length) {
       const remoteResult = evaluateDescriptionAgainstCatalog(descText, remoteCatalog);
       remoteResult.source = 'remote';
+      remoteResult.matrixVersion = loadedRemoteCatalogMeta[providerKey]?.capturedAt || '';
       return remoteResult;
     }
 
     const fallbackResult = evaluateDescriptionAgainstRules(descText, fallbackRules || []);
     fallbackResult.source = 'fallback';
+    fallbackResult.matrixVersion = 'fallback-rules';
     return fallbackResult;
   }
 
@@ -1182,31 +1197,31 @@
 
   async function runParkPlacePrecheck(descText) {
     const matrixResult = await evaluateParkPlaceDescription(descText);
-    console.log('[HW24 Matrix] PP precheck source:', matrixResult?.source || 'unknown');
+    console.log('[HW24 Matrix] PP precheck source:', matrixResult?.source || 'unknown', '| version:', matrixResult?.matrixVersion || 'n/a');
     return confirmParkPlaceMatrixWarning(matrixResult);
   }
 
   async function runEvernexPrecheck(descText) {
     const matrixResult = await evaluateEvernexDescription(descText);
-    console.log('[HW24 Matrix] TG precheck source:', matrixResult?.source || 'unknown');
+    console.log('[HW24 Matrix] TG precheck source:', matrixResult?.source || 'unknown', '| version:', matrixResult?.matrixVersion || 'n/a');
     return confirmEvernexMatrixWarning(matrixResult);
   }
 
   async function runItrisPrecheck(descText) {
     const matrixResult = await evaluateItrisDescription(descText);
-    console.log('[HW24 Matrix] ITRIS precheck source:', matrixResult?.source || 'unknown');
+    console.log('[HW24 Matrix] ITRIS precheck source:', matrixResult?.source || 'unknown', '| version:', matrixResult?.matrixVersion || 'n/a');
     return confirmItrisMatrixWarning(matrixResult);
   }
 
   async function runDisPrecheck(descText) {
     const matrixResult = await evaluateDisDescription(descText);
-    console.log('[HW24 Matrix] DIS precheck source:', matrixResult?.source || 'unknown');
+    console.log('[HW24 Matrix] DIS precheck source:', matrixResult?.source || 'unknown', '| version:', matrixResult?.matrixVersion || 'n/a');
     return confirmDisMatrixWarning(matrixResult);
   }
 
   async function runNordicPrecheck(descText) {
     const matrixResult = await evaluateNordicDescription(descText);
-    console.log('[HW24 Matrix] Nordic precheck source:', matrixResult?.source || 'unknown');
+    console.log('[HW24 Matrix] Nordic precheck source:', matrixResult?.source || 'unknown', '| version:', matrixResult?.matrixVersion || 'n/a');
     return confirmNordicMatrixWarning(matrixResult);
   }
 
