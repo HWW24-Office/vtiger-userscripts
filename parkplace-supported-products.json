@@ -1,0 +1,80 @@
+{
+  "source": "https://www.parkplacetechnologies.com/de/third-party-maintenance/",
+  "captured_at": "2026-03-24",
+  "note": "Hersteller/OEMs von der Park Place TPM-Seite (Unterstuetzte OEMs + Kategorien Server/Storage/Network).",
+  "brands": [
+    {
+      "name": "Dell EMC",
+      "storage": ["Dell EMC"],
+      "server": ["Dell EMC"],
+      "network": ["Dell EMC"]
+    },
+    {
+      "name": "Dell",
+      "storage": ["Dell"],
+      "server": ["Dell"],
+      "network": ["Dell"]
+    },
+    {
+      "name": "HPE",
+      "storage": ["HPE"],
+      "server": ["HPE"],
+      "network": ["HPE"]
+    },
+    {
+      "name": "IBM",
+      "storage": ["IBM"],
+      "server": ["IBM"]
+    },
+    {
+      "name": "Cisco",
+      "server": ["Cisco"],
+      "network": ["Cisco"]
+    },
+    {
+      "name": "Lenovo",
+      "storage": ["Lenovo"],
+      "server": ["Lenovo"]
+    },
+    {
+      "name": "Hitachi",
+      "storage": ["Hitachi"],
+      "server": ["Hitachi"]
+    },
+    {
+      "name": "NetApp",
+      "storage": ["NetApp"]
+    },
+    {
+      "name": "Intel",
+      "server": ["Intel"]
+    },
+    {
+      "name": "Juniper",
+      "network": ["Juniper"]
+    },
+    {
+      "name": "Sun Oracle",
+      "storage": ["Sun Oracle"],
+      "server": ["Sun Oracle"]
+    },
+    {
+      "name": "Fujitsu",
+      "server": ["Fujitsu"]
+    },
+    {
+      "name": "Brocade",
+      "server": ["Brocade"],
+      "network": ["Brocade"]
+    },
+    {
+      "name": "Supermicro",
+      "storage": ["Supermicro"],
+      "server": ["Supermicro"]
+    },
+    {
+      "name": "Overland Storage",
+      "storage": ["Overland Storage"]
+    }
+  ]
+}
