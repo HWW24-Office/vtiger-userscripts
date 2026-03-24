@@ -1654,35 +1654,6 @@
       || /hardwarewartung\s*24\s*gmbh/i.test(lower);
   }
 
-  function dedupeTrailingOwnSignature(html) {
-    if (!html) return html;
-
-    const emailRe = /[a-z0-9._%+-]+@hardwarewartung\.com/ig;
-    const hits = [];
-    let m;
-    while ((m = emailRe.exec(html)) !== null) {
-      hits.push(m.index);
-      if (hits.length >= 2) break;
-    }
-
-    if (hits.length < 2) return html;
-
-    const secondEmailIdx = hits[1];
-    const tagAnchors = ['<p', '<div', '<tr', '<td', '<br'];
-    let cutIdx = secondEmailIdx;
-
-    for (const anchor of tagAnchors) {
-      const idx = html.lastIndexOf(anchor, secondEmailIdx);
-      if (idx !== -1 && idx < cutIdx) cutIdx = idx;
-    }
-
-    if (cutIdx <= 0 || cutIdx >= html.length) return html;
-
-    const trimmed = html.slice(0, cutIdx).replace(/(?:\s|&nbsp;|<br\s*\/?\s*>)+$/i, '');
-    console.warn('[HW24 Provider] Removed trailing duplicate own-signature fragment');
-    return trimmed;
-  }
-
   async function fillEmailBody(provider) {
     const config = resolveProviderConfig(provider);
     console.log('[HW24 Provider] Filling email for', config.label, '| style:', config.style, '| lang:', config.lang);
@@ -1796,9 +1767,6 @@
       }
     }
     // style === 'sie': keep "Mit freundlichen Grüßen", no extra Vorname
-
-    // Remove duplicated own-signature fragments (observed in some EMAILMaker flows)
-    result = dedupeTrailingOwnSignature(result);
 
     // Write back
     writeEmailHTML(body, result);
