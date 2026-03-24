@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.8
+// @version      1.5.9
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.8';
+  const HW24_VERSION = '1.5.9';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -410,9 +410,15 @@
     return proceed;
   }
 
-  function hasParkPlaceRequestInText(text) {
+  function escapeRegExp(s) {
+    return (s || '').toString().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function hasRequestInText(text, requestMarker) {
     const t = (text || '').toString();
-    return /Provider-Anfrage\s*:\s*Park Place\s*angefragt/i.test(t);
+    if (!t || !requestMarker) return false;
+    const rx = new RegExp(escapeRegExp(requestMarker), 'i');
+    return rx.test(t);
   }
 
   async function fetchTextSafely(url) {
@@ -425,7 +431,7 @@
     }
   }
 
-  async function detectParkPlaceDuplicateRequest(recordId) {
+  async function detectDuplicateRequest(recordId, requestMarker) {
     const snapshots = [];
 
     snapshots.push(document.body?.innerText || '');
@@ -441,34 +447,36 @@
     if (detailHtml) snapshots.push(detailHtml);
     if (commentsHtml) snapshots.push(commentsHtml);
 
-    return snapshots.some(hasParkPlaceRequestInText);
+    return snapshots.some(text => hasRequestInText(text, requestMarker));
   }
 
   async function runParkPlacePrecheck(descText) {
     const matrixResult = evaluateParkPlaceDescription(descText);
-    if (!confirmParkPlaceMatrixWarning(matrixResult)) return false;
+    return confirmParkPlaceMatrixWarning(matrixResult);
+  }
 
+  async function runDuplicateWarning(requestTypeLabel, targetLabel, requestMarker) {
     const recordId = _getRecordId();
-    if (!recordId) return true;
+    if (!recordId || !requestMarker) return true;
 
     try {
-      const hasDuplicate = await detectParkPlaceDuplicateRequest(recordId);
+      const hasDuplicate = await detectDuplicateRequest(recordId, requestMarker);
       if (!hasDuplicate) return true;
 
       const proceed = confirm(
         '⚠️ Dedupe-Hinweis\n\n' +
-        'Für dieses Potential wurde vermutlich bereits eine Park Place Anfrage dokumentiert ' +
-        '(Kommentar: "Provider-Anfrage: Park Place angefragt").\n\n' +
-        'Trotzdem erneut mit Park Place fortfahren?'
+        `Für dieses Potential wurde vermutlich bereits eine ${requestTypeLabel}-Anfrage an ${targetLabel} dokumentiert ` +
+        `(Kommentar: "${requestMarker}").\n\n` +
+        `Trotzdem erneut mit ${requestTypeLabel}-Anfrage fortfahren?`
       );
 
       if (!proceed) {
-        console.log('[HW24 Park Place] User aborted after duplicate warning', { recordId });
+        console.log('[HW24 Dedupe] User aborted after duplicate warning', { recordId, requestTypeLabel, targetLabel, requestMarker });
       }
 
       return proceed;
     } catch (e) {
-      console.warn('[HW24 Park Place] Duplicate check failed, continuing without block:', e);
+      console.warn('[HW24 Dedupe] Duplicate check failed, continuing without block:', e);
       return true;
     }
   }
@@ -1638,6 +1646,43 @@
     return false;
   }
 
+  function bodyLikelyHasOwnSignature(html) {
+    if (!html) return false;
+    const lower = html.toLowerCase();
+    return /@hardwarewartung\.com/i.test(lower)
+      || /www\.hardwarewartung\.com/i.test(lower)
+      || /hardwarewartung\s*24\s*gmbh/i.test(lower);
+  }
+
+  function dedupeTrailingOwnSignature(html) {
+    if (!html) return html;
+
+    const emailRe = /[a-z0-9._%+-]+@hardwarewartung\.com/ig;
+    const hits = [];
+    let m;
+    while ((m = emailRe.exec(html)) !== null) {
+      hits.push(m.index);
+      if (hits.length >= 2) break;
+    }
+
+    if (hits.length < 2) return html;
+
+    const secondEmailIdx = hits[1];
+    const tagAnchors = ['<p', '<div', '<tr', '<td', '<br'];
+    let cutIdx = secondEmailIdx;
+
+    for (const anchor of tagAnchors) {
+      const idx = html.lastIndexOf(anchor, secondEmailIdx);
+      if (idx !== -1 && idx < cutIdx) cutIdx = idx;
+    }
+
+    if (cutIdx <= 0 || cutIdx >= html.length) return html;
+
+    const trimmed = html.slice(0, cutIdx).replace(/(?:\s|&nbsp;|<br\s*\/?\s*>)+$/i, '');
+    console.warn('[HW24 Provider] Removed trailing duplicate own-signature fragment');
+    return trimmed;
+  }
+
   async function fillEmailBody(provider) {
     const config = resolveProviderConfig(provider);
     console.log('[HW24 Provider] Filling email for', config.label, '| style:', config.style, '| lang:', config.lang);
@@ -1671,11 +1716,18 @@
       }
     }
 
-    // Step B: Click "Include Signature" — now inserts at END (correct position)
-    clickIncludeSignature(composeContainer);
-    await sleep(1000); // Wait for signature to be inserted into CKEditor
+    // Step B: Click "Include Signature" only if no signature markers are present yet
+    let initialData = readEmailHTML();
+    const hasInitialSignature = bodyLikelyHasOwnSignature(initialData?.html || '');
+    if (hasInitialSignature) {
+      console.log('[HW24 Provider] Signature markers already present — skipping include-signature click');
+    } else {
+      clickIncludeSignature(composeContainer);
+      await sleep(1000); // Wait for signature to be inserted into CKEditor
+      initialData = readEmailHTML();
+    }
 
-    let data = readEmailHTML();
+    let data = initialData;
     if (!data) {
       console.warn('[HW24 Provider] Email body not found, retrying...');
       await sleep(1500);
@@ -1744,6 +1796,9 @@
       }
     }
     // style === 'sie': keep "Mit freundlichen Grüßen", no extra Vorname
+
+    // Remove duplicated own-signature fragments (observed in some EMAILMaker flows)
+    result = dedupeTrailingOwnSignature(result);
 
     // Write back
     writeEmailHTML(body, result);
@@ -2055,6 +2110,10 @@
       if (!shouldProceed) return;
     }
 
+    const providerMarker = 'Provider-Anfrage: ' + config.label + ' angefragt';
+    const dedupeProceed = await runDuplicateWarning('Provider', config.label, providerMarker);
+    if (!dedupeProceed) return;
+
     // Set pending provider + reset step tracking
     pendingProvider = { ...provider };
     pendingType = 'provider';
@@ -2073,12 +2132,16 @@
     triggerEMAILMakerCompose();
   }
 
-  function handleDealerClick(dealer) {
+  async function handleDealerClick(dealer) {
     console.log('[HW24 Dealer] Dealer clicked:', dealer.label, '| To:', dealer.to, '| CC:', dealer.cc, '| Style:', dealer.style, '| Lang:', dealer.lang);
 
     // Cache description from detail view BEFORE opening popup
     pendingDescriptionText = readDescriptionText();
     console.log('[HW24 Dealer] Description cached, length:', pendingDescriptionText.length);
+
+    const dealerMarker = 'Händler-Anfrage: ' + dealer.label + ' angefragt';
+    const dedupeProceed = await runDuplicateWarning('Händler', dealer.label, dealerMarker);
+    if (!dedupeProceed) return;
 
     // Set pending provider (reuse same flow) + type
     pendingProvider = { ...dealer };
