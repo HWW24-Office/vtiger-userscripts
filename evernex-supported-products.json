@@ -1,0 +1,98 @@
+{
+  "source": "https://evernex.com/de/it-wartung-fuer-ihr-rechenzentrum/alle-hersteller-anzeigen/",
+  "captured_at": "2026-03-24",
+  "brands": [
+    {
+      "name": "Brocade",
+      "network": ["G6xx Series", "65xx Series", "5xxx Series", "Silkworm", "DCX Series"]
+    },
+    {
+      "name": "BULL",
+      "server": ["Escala", "Bullion", "BullSequana", "Novascale"]
+    },
+    {
+      "name": "Cisco",
+      "network": ["Catalyst Series", "Business Series", "Nexus Series", "ISR Series", "ASR Series", "MDS Series"],
+      "server": ["UCS B-Series", "UCS C-Series", "Secure Network Server Appliance (SNS)", "Email Security Appliance (ESA)", "Adaptive Security Appliance (ASA)"]
+    },
+    {
+      "name": "DEC",
+      "server": ["Alpha Server", "Alpha Station", "VAX", "PDP"]
+    },
+    {
+      "name": "DELL EMC",
+      "network": ["PowerSwitch N Series", "PowerSwitch S Series", "Networking C-series", "Networking S-series", "PowerConnect W series", "Force10", "Connectrix"],
+      "server": ["PowerEdge", "PowerEdge XC Nutanix Appliance", "Precision", "VxRail"],
+      "library": ["PowerVault"],
+      "storage": ["PowerVault", "EqualLogic", "Compellent", "VNX", "VNXe", "Clariion", "Celerra", "Centera", "Symmetrix - DMX", "Symmetrix - VMAX", "Data Domain", "Isilon", "vBlock", "XtremIO", "XtremSF", "Unity", "Unity XT"]
+    },
+    {
+      "name": "EXTREME NETWORKS",
+      "network": ["NETIRON CES Series"]
+    },
+    {
+      "name": "Fujitsu",
+      "library": ["Eternus LT"],
+      "server": ["Primergy", "SPARC M Series", "SPARC T Series", "Primepower"],
+      "storage": ["Eternus"]
+    },
+    {
+      "name": "HITACHI",
+      "server": ["ComputeBlade", "ComputeRack"],
+      "storage": ["VSP", "VSP G", "HUS", "HUS-VM", "AMS"]
+    },
+    {
+      "name": "HPE",
+      "server": ["ProLiant", "Apollo", "ProLiant DX Nutanix appliance", "Integrity", "HP9000", "SuperDome", "BladeSystem", "Synergy"],
+      "library": ["StoreEver MSL", "StoreEver ESL", "StoreEver Autoloaders", "StorageWorks ESL E-series", "StorageWorks MSL", "StorageWorks Autoloaders"],
+      "storage": ["MSA", "MSA 2000", "StorageWorks", "EVA", "XP12000/XP24000", "LeftHand P4000", "3Par", "StoreOnce", "StoreEasy", "StoreVirtual"],
+      "network": ["OfficeConnect", "A7500 Series", "Aruba", "B-Series"]
+    },
+    {
+      "name": "IBM",
+      "library": ["TS2900", "TS3100", "TS3200", "TS3310", "TS3400", "TS3500", "TS4300", "TS4500", "External Tape drive, LTO"],
+      "server": ["Blade Center", "HMC", "RS6000", "p-series", "Power Systems", "i-series", "x-series", "z-series", "ThinkServer", "PureFlex System", "iDataPLex", "NeXtScale"],
+      "storage": ["n-series", "FastT / DS-series", "Storwize", "FlashSystem", "DS6000", "DS8000", "XIV", "SVC"],
+      "network": ["Network Switches (Networkxxx)"]
+    },
+    {
+      "name": "Juniper",
+      "network": ["ISG Series", "QFX Series", "SRX Series", "EX Series", "J Series"]
+    },
+    {
+      "name": "LENOVO",
+      "server": ["ThinkSystem", "ThinkAgyle", "ThinkAgyle HX Nutanix Appliance", "PureFlex System"],
+      "storage": ["ThinkSystem DE Series", "ThinkSystem DM Series"]
+    },
+    {
+      "name": "Netapp",
+      "storage": ["AFF Series", "FAS Series", "V Series", "GF Series", "SA Series", "F Series", "E Series"]
+    },
+    {
+      "name": "Overland-Tandberg",
+      "library": ["NEO 200s - 400s", "NEO 2000 - 8000", "NEO 2000e - 4000e", "NEO s T24 - T48"]
+    },
+    {
+      "name": "Quantum",
+      "library": ["Scalar i Series", "SuperLoader 3", "LTO, DAT, DLT, SDLT Tape Drives"]
+    },
+    {
+      "name": "RUCKUS",
+      "note": "No records found"
+    },
+    {
+      "name": "SUN Oracle",
+      "library": ["StoreEdge Lxxxx", "StorageTek Lxxx", "StorageTek SL8500 / SL3000", "StorageTek SL150", "T10000, 9840, 9940 Tape Drives", "LTO, DAT, DLT, SDLT Tape Drives"],
+      "storage": ["StoreEdge 99x Systems", "Storage / Storage Tek 6xxx Arrays", "Storage 25xx Arrays", "Storage J4xxx", "StoreEdge 3xxx Arrays"],
+      "server": ["Fujitsu Server M10-series", "Fujitsu Server M12-series", "Netra", "ORACLE SERVER X5-series", "ORACLE SERVER X6-series", "ORACLE SERVER X7-series", "SPARC M-series", "SPARC T3-series", "SPARC T4-series", "SPARC T5-series", "SUN BLADE", "SUN ENTERPRISE", "SUN FIRE", "SUN SERVER X4-series", "SUN SPARC ENTERPRISE M-series", "SUN SPARC ENTERPRISE T-series", "ULTRA"]
+    },
+    {
+      "name": "Supermicro",
+      "server": ["SuperBlade", "MicroBlade", "SuperStorage", "A+ Server", "SuperServer"]
+    },
+    {
+      "name": "Synology",
+      "storage": ["RS-Serie", "RC-Serie", "DS-Serie"]
+    }
+  ]
+}
