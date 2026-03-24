@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.7
+// @version      1.5.8
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.7';
+  const HW24_VERSION = '1.5.8';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -174,6 +174,303 @@
 
     console.warn('[HW24 Provider] Description field not found');
     return '';
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MODULE 1a: PARK PLACE PRECHECK (WARN-ONLY)
+     ═══════════════════════════════════════════════════════════════════════════ */
+
+  const PARK_PLACE_MATRIX_RULES = [
+    {
+      manufacturer: 'Cisco',
+      aliases: ['cisco', 'catalyst', 'nexus', 'meraki', 'firepower', 'asa', 'isr', 'asr', 'mds', 'wlc'],
+      families: [
+        /\bcatalyst\s*(?:8000|9\d{3}|91\d{2}|92\d{2}|93\d{2}|94\d{2}|95\d{2}|96\d{2})\b/i,
+        /\bnexus\s*(?:n?2k|n?3k|n?5k|n?6k|n?7k|n?9k|fex)\b/i,
+        /\b(?:isr|asr)\s*(?:g2|4000|4200|4300|4400|900|1000|9000)?\b/i,
+        /\b(?:asa\s*55\d{2}|pix|firepower|meraki\s*(?:mr|mx|ms)|mds|wlc\s*\d+|aironet|ap\d{3,4})\b/i
+      ]
+    },
+    {
+      manufacturer: 'Dell',
+      aliases: ['dell', 'dell emc', 'emc', 'poweredge', 'powervault', 'powerstore', 'powerscale', 'compellent', 'equallogic', 'isilon', 'unity', 'vmax', 'vnx', 'xtremio', 'connectrix', 'powerconnect', 'data domain', 'powerprotect', 'vxrail'],
+      families: [
+        /\bpoweredge\s*(?:mx|vrtx|xc|xe|xr|r\d+|m\d+|t\d+)?\b/i,
+        /\b(?:powervault|powerstore|powerscale|powermax|powerprotect|data\s*domain|compellent|equallogic|isilon|unity\s*xt?|vmax\d*|vnx[e]?|vplex|xtremio|connectrix|powerconnect|vxrail|vblock|vxblock|powerflex)\b/i
+      ]
+    },
+    {
+      manufacturer: 'HPE',
+      aliases: ['hpe', 'hewlett packard', 'hp', 'proliant', 'synergy', 'superdome', 'primera', '3par', 'nimble', 'msa', 'storeonce', 'storeeasy', 'storeever', 'aruba', 'procurve', 'moonshot'],
+      families: [
+        /\bproliant\s*(?:dx|gen\s*\d+|dl\d+|ml\d+)?\b/i,
+        /\b(?:apollo|blade\s*system|synergy|superdome|moonshot|integrity|nonstop|3par|primera|nimble|msa|storeonce|storeeasy|storeever|storevirtual|alletra|aruba|procurve|flexfabric|flexnetwork)\b/i
+      ]
+    },
+    {
+      manufacturer: 'IBM',
+      aliases: ['ibm', 'zsystem', 'z series', 'power8', 'power9', 'power10', 'flashsystem', 'storwize', 'xiv', 'ds8000'],
+      families: [
+        /\b(?:power\s*[5-9]|power10|xseries|system\s*x|z\s*series|zsystem|bladecenter|pureflex|netezza|flashsystem|storwize|xiv|ds\s*8000|totalstorage|ts\s*series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'NetApp',
+      aliases: ['netapp', 'fas', 'aff', 'ef-series', 'e-series', 'storevault'],
+      families: [
+        /\b(?:fas\d*|aff\s*[ac]?-?\d*|ef\s*-?series|e\s*-?series|storevault|f-series|ibm\s*n-series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Juniper',
+      aliases: ['juniper', 'netscreen', 'qfx', 'srx', 'mx series', 'ex series'],
+      families: [
+        /\b(?:ex\s*-?series|mx\s*-?series|qfx\s*-?series|srx\s*-?series|netscreen|ssg\s*-?series|m\s*-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Brocade',
+      aliases: ['brocade', 'silkworm', 'vdx', 'bigiron', 'fastiron', 'netiron', 'dcx'],
+      families: [
+        /\b(?:silkworm|vdx|bigiron|fastiron|netiron|dcx|icx|sphereon|turboiron|intrepid|12000\s*director|24000\s*director|48000\s*director)\b/i
+      ]
+    },
+    {
+      manufacturer: 'F5',
+      aliases: ['f5', 'big-ip', 'viprion'],
+      families: [
+        /\b(?:big-?ip|viprion|i\s*series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Fortinet',
+      aliases: ['fortinet', 'fortigate', 'fortiswitch'],
+      families: [
+        /\b(?:fortigate|fortiswitch)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Lenovo',
+      aliases: ['lenovo', 'thinksystem', 'thinkserver', 'thinkagile', 'system x', 'flex system'],
+      families: [
+        /\b(?:thinksystem|thinkserver|thinkagile|system\s*x|flex\s*system|d-series|s-series|de-series|ds-series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Hitachi',
+      aliases: ['hitachi', 'hitachi vantara', 'vsp', 'hnas', 'ams'],
+      families: [
+        /\b(?:vsp\s*(?:e|f|g|n|5000)?|hnas|ams|unified\s*storage|virtual\s*storage\s*platform)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Oracle/Sun',
+      aliases: ['oracle', 'sun', 'sparc', 'sun fire', 'storagetek', 'storedge', 'netra'],
+      families: [
+        /\b(?:sparc|sun\s*fire|ultrasparc|storagetek|storedge|netra|x-series|v-series|t-series|m-series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'NVIDIA',
+      aliases: ['nvidia', 'dgx', 'infiniband'],
+      families: [
+        /\b(?:dgx-?1|infiniband)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Arista',
+      aliases: ['arista', 'dcs', 'ccs'],
+      families: [
+        /\b(?:dcs|ccs)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Extreme Networks',
+      aliases: ['extreme', 'extreme networks'],
+      families: [
+        /\b(?:vdx|vsp\s*switches?)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Palo Alto',
+      aliases: ['palo alto', 'paloalto'],
+      families: [
+        /\bfirewalls?\b/i
+      ]
+    },
+    {
+      manufacturer: 'Riverbed',
+      aliases: ['riverbed', 'steelhead'],
+      families: [
+        /\bsteelhead\b/i
+      ]
+    },
+    {
+      manufacturer: 'Supermicro',
+      aliases: ['supermicro', 'superserver', 'superstorage'],
+      families: [
+        /\b(?:superserver|superstorage|nx-appliances?)\b/i
+      ]
+    }
+  ];
+
+  function normalizeForMatrix(text) {
+    return (text || '')
+      .toString()
+      .toLowerCase()
+      .replace(/[\u2013\u2014]/g, '-')
+      .replace(/[^a-z0-9+\-./\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function uniq(arr) {
+    return [...new Set(arr.filter(Boolean))];
+  }
+
+  function evaluateParkPlaceDescription(descText) {
+    const raw = (descText || '').toString().trim();
+    if (!raw) {
+      return {
+        status: 'WARN_INCOMPLETE',
+        reason: 'Beschreibung ist leer.',
+        manufacturers: [],
+        matched: []
+      };
+    }
+
+    const normalized = normalizeForMatrix(raw);
+    const detectedManufacturers = [];
+    const matchedFamilies = [];
+
+    for (const rule of PARK_PLACE_MATRIX_RULES) {
+      const manuHit = rule.aliases.some(alias => normalized.includes(normalizeForMatrix(alias)));
+      if (!manuHit) continue;
+
+      detectedManufacturers.push(rule.manufacturer);
+
+      const familyMatches = rule.families
+        .filter(re => re.test(raw))
+        .map(re => re.source.replace(/\\b/g, '').replace(/\(\?:/g, '('));
+
+      if (familyMatches.length) {
+        matchedFamilies.push(`${rule.manufacturer}: ${familyMatches[0]}`);
+      }
+    }
+
+    const manufacturers = uniq(detectedManufacturers);
+    const matched = uniq(matchedFamilies);
+
+    if (matched.length) {
+      return {
+        status: 'ALLOW',
+        reason: 'Mindestens ein Hersteller + Modell/Familie ist in der Matrix enthalten.',
+        manufacturers,
+        matched
+      };
+    }
+
+    if (manufacturers.length) {
+      return {
+        status: 'WARN_MISMATCH',
+        reason: 'Hersteller erkannt, aber kein eindeutiges Modell/Familie aus der Matrix gefunden.',
+        manufacturers,
+        matched
+      };
+    }
+
+    return {
+      status: 'WARN_INCOMPLETE',
+      reason: 'Kein Matrix-Hersteller in der Beschreibung erkannt.',
+      manufacturers,
+      matched
+    };
+  }
+
+  function confirmParkPlaceMatrixWarning(result) {
+    if (!result || result.status === 'ALLOW') return true;
+
+    const manufacturerInfo = result.manufacturers.length ? result.manufacturers.join(', ') : 'keine';
+    const matchedInfo = result.matched.length ? result.matched.join(' | ') : 'kein Match';
+    const title = result.status === 'WARN_MISMATCH'
+      ? '⚠️ Park Place Matrix Warnung (Modell/Familie nicht eindeutig)'
+      : '⚠️ Park Place Matrix Warnung (zu wenig Informationen)';
+
+    const proceed = confirm(
+      `${title}\n\n` +
+      `${result.reason}\n` +
+      `Erkannte Hersteller: ${manufacturerInfo}\n` +
+      `Matrix-Matches: ${matchedInfo}\n\n` +
+      'Trotzdem mit Park Place Anfrage fortfahren?'
+    );
+
+    if (!proceed) {
+      console.log('[HW24 Park Place] User aborted after matrix warning', result);
+    }
+    return proceed;
+  }
+
+  function hasParkPlaceRequestInText(text) {
+    const t = (text || '').toString();
+    return /Provider-Anfrage\s*:\s*Park Place\s*angefragt/i.test(t);
+  }
+
+  async function fetchTextSafely(url) {
+    try {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) return '';
+      return await response.text();
+    } catch {
+      return '';
+    }
+  }
+
+  async function detectParkPlaceDuplicateRequest(recordId) {
+    const snapshots = [];
+
+    snapshots.push(document.body?.innerText || '');
+
+    const detailUrl = `index.php?module=Potentials&view=Detail&record=${encodeURIComponent(recordId)}`;
+    const commentsUrl = `index.php?module=ModComments&view=List&related_to=${encodeURIComponent(recordId)}`;
+
+    const [detailHtml, commentsHtml] = await Promise.all([
+      fetchTextSafely(detailUrl),
+      fetchTextSafely(commentsUrl)
+    ]);
+
+    if (detailHtml) snapshots.push(detailHtml);
+    if (commentsHtml) snapshots.push(commentsHtml);
+
+    return snapshots.some(hasParkPlaceRequestInText);
+  }
+
+  async function runParkPlacePrecheck(descText) {
+    const matrixResult = evaluateParkPlaceDescription(descText);
+    if (!confirmParkPlaceMatrixWarning(matrixResult)) return false;
+
+    const recordId = _getRecordId();
+    if (!recordId) return true;
+
+    try {
+      const hasDuplicate = await detectParkPlaceDuplicateRequest(recordId);
+      if (!hasDuplicate) return true;
+
+      const proceed = confirm(
+        '⚠️ Dedupe-Hinweis\n\n' +
+        'Für dieses Potential wurde vermutlich bereits eine Park Place Anfrage dokumentiert ' +
+        '(Kommentar: "Provider-Anfrage: Park Place angefragt").\n\n' +
+        'Trotzdem erneut mit Park Place fortfahren?'
+      );
+
+      if (!proceed) {
+        console.log('[HW24 Park Place] User aborted after duplicate warning', { recordId });
+      }
+
+      return proceed;
+    } catch (e) {
+      console.warn('[HW24 Park Place] Duplicate check failed, continuing without block:', e);
+      return true;
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1744,13 +2041,19 @@
     else markDetailButton(key, state);
   }
 
-  function handleProviderClick(provider) {
+  async function handleProviderClick(provider) {
     const config = resolveProviderConfig(provider);
     console.log('[HW24 Provider] Provider clicked:', config.label, '| To:', config.to, '| CC:', config.cc, '| Style:', config.style, '| Lang:', config.lang);
 
     // Cache description from detail view BEFORE opening popup
     pendingDescriptionText = readDescriptionText();
     console.log('[HW24 Provider] Description cached, length:', pendingDescriptionText.length);
+
+    // Park Place precheck (warn-only): matrix match + duplicate check
+    if (provider.key === 'PP') {
+      const shouldProceed = await runParkPlacePrecheck(pendingDescriptionText);
+      if (!shouldProceed) return;
+    }
 
     // Set pending provider + reset step tracking
     pendingProvider = { ...provider };
