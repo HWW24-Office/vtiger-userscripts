@@ -4,58 +4,171 @@
   "brands": [
     {
       "name": "HPE",
-      "server": ["ProLiant", "Blade System", "Integrity", "HP9000", "SuperDome"],
-      "storage": ["3PAR", "MSA", "EVA", "XP-series", "LeftHand", "StoreEver", "StorageWorks"],
-      "network": ["Aruba", "B-series"]
+      "server": [
+        "ProLiant",
+        "Blade System",
+        "Integrity",
+        "HP9000",
+        "SuperDome"
+      ],
+      "storage": [
+        "3PAR",
+        "MSA",
+        "EVA",
+        "XP-series",
+        "LeftHand",
+        "StoreEver",
+        "StorageWorks"
+      ],
+      "network": [
+        "Aruba",
+        "B-series"
+      ]
     },
     {
       "name": "IBM",
-      "server": ["X-Series", "P-Series", "I-Series", "Blade Center"],
-      "storage": ["StorWize", "DS-series", "N-series", "FlashSystem", "XIV", "SVC", "TS-series"],
-      "network": ["Network"]
+      "server": [
+        "X-Series",
+        "P-Series",
+        "I-Series",
+        "Blade Center"
+      ],
+      "storage": [
+        "StorWize",
+        "DS-series",
+        "N-series",
+        "FlashSystem",
+        "XIV",
+        "SVC",
+        "TS-series"
+      ],
+      "network": [
+        "Network"
+      ]
     },
     {
       "name": "Dell EMC",
-      "server": ["PowerEdge", "Precision"],
-      "storage": ["VNX", "Data Domain", "Unity", "VMAX", "Isilon", "XtremIO", "Clariion", "Celerra", "Centerra", "EqualLogic", "PowerVault"],
-      "network": ["PowerSwitch", "PowerConnect", "C-series", "S-series"]
+      "server": [
+        "PowerEdge",
+        "Precision"
+      ],
+      "storage": [
+        "VNX",
+        "Data Domain",
+        "Unity",
+        "VMAX",
+        "Isilon",
+        "XtremIO",
+        "Clariion",
+        "Celerra",
+        "Centerra",
+        "EqualLogic",
+        "PowerVault"
+      ],
+      "network": [
+        "PowerSwitch",
+        "PowerConnect",
+        "C-series",
+        "S-series"
+      ]
     },
     {
       "name": "Fujitsu",
-      "server": ["Primergy", "Primepower", "SPARC"],
-      "storage": ["Eternus"]
+      "server": [
+        "Primergy",
+        "Primepower",
+        "SPARC"
+      ],
+      "storage": [
+        "Eternus"
+      ]
     },
     {
       "name": "Lenovo",
-      "server": ["ThinkSystem"],
-      "storage": ["DE-series", "DM-series"]
+      "server": [
+        "ThinkSystem"
+      ],
+      "storage": [
+        "DE-series",
+        "DM-series"
+      ]
     },
     {
       "name": "NetApp",
-      "storage": ["FAS-series", "E-series", "F-series", "GF-series", "SA-series", "V-series"]
+      "storage": [
+        "FAS-series",
+        "E-series",
+        "F-series",
+        "GF-series",
+        "SA-series",
+        "V-series"
+      ]
     },
     {
       "name": "Hitachi",
-      "server": ["ComputeBlade"],
-      "storage": ["G-series", "VSP", "USP", "HUS", "AMS"]
+      "server": [
+        "ComputeBlade"
+      ],
+      "storage": [
+        "G-series",
+        "VSP",
+        "USP",
+        "HUS",
+        "AMS"
+      ]
     },
     {
       "name": "Cisco",
-      "server": ["UCS"],
-      "network": ["Catalyst", "Nexus", "MDS", "Business"]
+      "server": [
+        "UCS"
+      ],
+      "network": [
+        "Catalyst",
+        "Nexus",
+        "MDS",
+        "Business"
+      ]
     },
     {
       "name": "Juniper",
-      "network": ["SRX", "ISG", "QFX", "EX", "J"]
+      "network": [
+        "SRX",
+        "ISG",
+        "QFX",
+        "EX",
+        "J"
+      ]
     },
     {
       "name": "Broadcom/Brocade",
-      "network": ["DCX-series", "Silkworm", "5-series", "65-series", "G6-series"]
+      "network": [
+        "DCX-series",
+        "Silkworm",
+        "5-series",
+        "65-series",
+        "G6-series"
+      ]
     },
     {
       "name": "Sun Oracle",
-      "server": ["T-series", "X-series", "M-series", "SPARC", "Fire", "Netra", "Blade"],
-      "storage": ["StoreEdge", "StorageTek"]
+      "server": [
+        "T-series",
+        "X-series",
+        "M-series",
+        "SPARC",
+        "Fire",
+        "Netra",
+        "Blade"
+      ],
+      "storage": [
+        "StoreEdge",
+        "StorageTek"
+      ]
     }
-  ]
+  ],
+  "last_checked_at": "2026-03-24",
+  "source_reachable": true,
+  "source_hash": "dd5496d6091c2a81f4189a47dc19f2bf691c4a7ec8c31731de3c7f331522340b",
+  "source_changed_at": "2026-03-24",
+  "refresh_note": "Initial source checksum recorded."
 }
