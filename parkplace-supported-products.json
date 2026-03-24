@@ -1,80 +1,99 @@
 {
   "source": "https://www.parkplacetechnologies.com/de/third-party-maintenance/",
   "captured_at": "2026-03-24",
-  "note": "Hersteller/OEMs von der Park Place TPM-Seite (Unterstuetzte OEMs + Kategorien Server/Storage/Network).",
+  "note": "Detaildaten aus den verlinkten OEM-Unterseiten auf der Park-Place-TPM-Seite (manuell normalisiert).",
   "brands": [
     {
       "name": "Dell EMC",
-      "storage": ["Dell EMC"],
-      "server": ["Dell EMC"],
-      "network": ["Dell EMC"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/dell-emc-storage-maintenance/",
+      "network": ["Connectrix", "PowerConnect"],
+      "server": ["PowerEdge", "PowerEdge MX", "PowerEdge VRTX", "PowerEdge XC", "PowerEdge XE", "PowerEdge XR"],
+      "storage": ["Celerra", "CLARiiON", "Compellent (SC)", "Isilon", "PowerMax", "PowerScale", "PowerStore", "PowerVault", "Symmetrix (DMX/VMAX)", "Unity", "Unity XT", "VMAX All Flash", "VMAX3", "VNX", "VNXE", "VPLEX", "XtremIO", "Avamar", "Centera", "Data Domain", "PowerProtect DD", "PowerProtect DP", "RecoverPoint"],
+      "hci": ["vBlock/VxBlock", "vSAN Ready Nodes", "VxFlex/PowerFlex", "VxRail", "XC"]
     },
     {
       "name": "Dell",
-      "storage": ["Dell"],
-      "server": ["Dell"],
-      "network": ["Dell"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/dell-storage-server-networking-maintenance/",
+      "network": ["Connectrix", "PowerConnect"],
+      "server": ["PowerEdge", "PowerEdge MX", "PowerEdge VRTX", "PowerEdge XC", "PowerEdge XE", "PowerEdge XR"],
+      "storage": ["Celerra", "CLARiiON", "Compellent", "EqualLogic", "Isilon", "PowerMax", "PowerScale", "PowerStore", "PowerVault", "Symmetrix", "Unity", "Unity XT", "VMAX All Flash", "VMAX3", "VNX", "VNXE", "VPLEX", "XtremIO", "Avamar", "Centera", "Data Domain", "PowerProtect", "RecoverPoint"],
+      "hci": ["vBlock/VxBlock", "vSAN Ready Nodes", "VxFlex/PowerFlex", "VxRail", "XC"]
     },
     {
       "name": "HPE",
-      "storage": ["HPE"],
-      "server": ["HPE"],
-      "network": ["HPE"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/hpe-storage-server-networking-maintenance/",
+      "network": ["FlexNetwork", "FlexFabric", "Aruba", "MSR", "HSR", "ProCurve"],
+      "server": ["ProLiant", "ProLiant S6500", "Apollo", "BladeSystem", "HP9000", "Integrity", "Moonshot", "NonStop", "Superdome", "Superdome X", "Superdome Flex 280", "Synergy"],
+      "storage": ["3PAR", "Alletra", "EVA", "MSA", "Nimble", "Primera", "StoreEasy", "StoreEver", "StoreOnce", "StoreVirtual/P4000 LeftHand", "XP"],
+      "hci": ["ProLiant DX", "SimpliVity"]
     },
     {
       "name": "IBM",
-      "storage": ["IBM"],
-      "server": ["IBM"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/ibm-maintenance/",
+      "server": ["BladeCenter H", "Pureflex", "Netezza", "Power", "xSeries", "iSeries"],
+      "storage": ["DS8000", "FlashSystem", "Storwize", "System Storage", "TS Series", "XIV"],
+      "mainframe": ["zSeries", "zSystem"],
+      "software": ["AIX", "OS/400", "z/OS", "DS Storage", "Storwize", "FlashSystems", "XIV", "SVC", "A9000"]
     },
     {
       "name": "Cisco",
-      "server": ["Cisco"],
-      "network": ["Cisco"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/cisco-server-and-networking-maintenance/",
+      "network": ["Catalyst", "ISR", "ASR", "ASA", "Nexus", "MDS", "Voice", "Wireless Controller", "Wireless Access Points", "Meraki", "Firepower"],
+      "server": ["MCS", "UCS"]
     },
     {
       "name": "Lenovo",
-      "storage": ["Lenovo"],
-      "server": ["Lenovo"]
+      "url": "https://www.parkplacetechnologies.com/third-party-maintenance/lenovo-maintenance/",
+      "server": ["System X", "Flex System", "ThinkServer", "ThinkSystem"],
+      "storage": ["Storwize"]
     },
     {
       "name": "Hitachi",
-      "storage": ["Hitachi"],
-      "server": ["Hitachi"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/hitachi-storage-maintenance/",
+      "storage": ["AMS", "Freedom", "TagmaStore USP", "Unified Storage", "Lightning", "NAS", "Thunder", "VSP E Series", "USP", "VSP", "VSP G Series", "VSP F Series"]
     },
     {
       "name": "NetApp",
-      "storage": ["NetApp"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/netapp-storage-maintenance/",
+      "storage": ["AFF", "E-Series", "EF-Series", "F-Series", "FAS", "IBM N-Series", "StorVault", "V-Series"]
     },
     {
       "name": "Intel",
-      "server": ["Intel"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/intel-server-maintenance/",
+      "server": ["S2600BP (Buchanan Pass)", "R1000SPO (Silver Pass)", "R2000WT (Watson Pass)", "S2600WF (Wolf Pass)"]
     },
     {
       "name": "Juniper",
-      "network": ["Juniper"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/juniper-network-maintenance/",
+      "network": ["EX Series", "QFX Series", "M Series", "MX Series", "NetScreen", "SRX Series", "SSG Series"]
     },
     {
       "name": "Sun Oracle",
-      "storage": ["Sun Oracle"],
-      "server": ["Sun Oracle"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/sun-oracle-storage-and-server-maintenance/",
+      "storage": ["SPARC Storage", "Sun Storage", "StorEdge", "StorageTek"],
+      "server": ["UltraSPARC", "Sun Fire V", "NetraSPARC", "SPARC Enterprise", "Sun Fire UltraSPARC", "M Series", "T Series", "V Series", "X Series"]
     },
     {
       "name": "Fujitsu",
-      "server": ["Fujitsu"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/fujitsu-server-storage-maintenance/",
+      "server": ["PRIMERGY"],
+      "storage": ["Eternus DX", "Eternus LT"]
     },
     {
       "name": "Brocade",
-      "server": ["Brocade"],
-      "network": ["Brocade"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/brocade-network-maintenance/",
+      "network": ["Silkworm SAN Switches", "VDX", "MLX", "MLXe", "Intrepid", "DCX Backbone", "48000 Director", "DCX", "NetIron", "FastIron SX", "TurboIron", "BigIron", "FastIron CX", "ServerIron", "ICX", "FES", "FGS", "FLS", "Sphereon"]
     },
     {
       "name": "Supermicro",
-      "storage": ["Supermicro"],
-      "server": ["Supermicro"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/supermicro-hardware-maintenance/",
+      "storage": ["SuperStorage"],
+      "server": ["SuperServer"]
     },
     {
       "name": "Overland Storage",
-      "storage": ["Overland Storage"]
+      "url": "https://www.parkplacetechnologies.com/de/third-party-maintenance/overland-storage-maintenance/",
+      "storage": ["NEO", "ARCvault", "LibraryXpress", "TapeXpress"]
     }
   ]
 }
