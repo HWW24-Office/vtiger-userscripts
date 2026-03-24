@@ -69,7 +69,13 @@ def sha256_text(value: str) -> str:
 
 
 def update_one(path: Path, today: str) -> Tuple[bool, str]:
-    data = read_json(path)
+    try:
+        data = read_json(path)
+    except json.JSONDecodeError as err:
+        return False, (
+            f"{path.name}: skipped (invalid JSON at line {err.lineno}, col {err.colno}: {err.msg})"
+        )
+
     source_url = str(data.get("source", "")).strip()
     if not source_url:
         return False, f"{path.name}: skipped (missing source URL)"
@@ -106,6 +112,7 @@ def update_one(path: Path, today: str) -> Tuple[bool, str]:
 def main() -> int:
     today = utc_date()
     changed_any = False
+    had_issues = False
     lines: List[str] = []
 
     for rel in JSON_FILES:
@@ -113,11 +120,22 @@ def main() -> int:
         if not path.exists():
             lines.append(f"{rel}: missing")
             continue
-        changed, msg = update_one(path, today)
+        try:
+            changed, msg = update_one(path, today)
+        except Exception as err:  # defensive guard: keep workflow alive
+            had_issues = True
+            changed = False
+            msg = f"{rel}: skipped (unexpected error: {type(err).__name__}: {err})"
+
         changed_any = changed_any or changed
+        if "skipped (invalid JSON" in msg or "unexpected error" in msg:
+            had_issues = True
         lines.append(msg)
 
     print("\n".join(lines))
+
+    if had_issues:
+        print("\n[monthly_matrix_refresh] completed with warnings; workflow stays green for visibility.")
 
     # Exit 0 either way; PR action handles no-change gracefully.
     return 0
