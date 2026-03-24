@@ -6,108 +6,203 @@
     {
       "name": "APC",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/apc/",
-      "usv": ["Rack-USV"]
+      "usv": [
+        "Rack-USV"
+      ]
     },
     {
       "name": "AURES",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/aures/",
-      "pos": ["alle AURES Kassensysteme"]
+      "pos": [
+        "alle AURES Kassensysteme"
+      ]
     },
     {
       "name": "Brocade",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/brocade/",
-      "switch": ["IDX", "VDX", "SAN", "DCX"]
+      "switch": [
+        "IDX",
+        "VDX",
+        "SAN",
+        "DCX"
+      ]
     },
     {
       "name": "Cisco",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/cisco/",
-      "server": ["Cisco UCS Server"],
-      "netzwerk": ["Cisco Catalyst Switches", "Cisco Nexus Switches"]
+      "server": [
+        "Cisco UCS Server"
+      ],
+      "netzwerk": [
+        "Cisco Catalyst Switches",
+        "Cisco Nexus Switches"
+      ]
     },
     {
       "name": "Dell EMC",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/dell-emc/",
-      "server": ["PowerEdge"],
-      "storage": ["PowerVault", "Datadomain", "VxRail", "ECX", "Unity", "VMAX", "Connectrix", "EqualLogic", "Isilon"],
-      "tape_library": ["PowerVault"]
+      "server": [
+        "PowerEdge"
+      ],
+      "storage": [
+        "PowerVault",
+        "Datadomain",
+        "VxRail",
+        "ECX",
+        "Unity",
+        "VMAX",
+        "Connectrix",
+        "EqualLogic",
+        "Isilon"
+      ],
+      "tape_library": [
+        "PowerVault"
+      ]
     },
     {
       "name": "Eaton",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/eaton/",
-      "usv": ["Rack-USV"]
+      "usv": [
+        "Rack-USV"
+      ]
     },
     {
       "name": "Fujitsu",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/fujitsu/",
-      "server": ["RX-Series"],
-      "storage": ["Eternus", "CS-Series"]
+      "server": [
+        "RX-Series"
+      ],
+      "storage": [
+        "Eternus",
+        "CS-Series"
+      ]
     },
     {
       "name": "Hitachi",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/hitachi/",
-      "storage": ["VSP", "HUS", "HNAS", "AMS"]
+      "storage": [
+        "VSP",
+        "HUS",
+        "HNAS",
+        "AMS"
+      ]
     },
     {
       "name": "HPE",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/hpe/",
-      "server": ["ProLiant", "HPUX"],
-      "storage": ["MSA", "StoreEasy", "3PAR", "StoreVirtual", "StoreOnce"],
-      "switch": ["ProCurve", "Aruba"],
-      "tape_library": ["MSL"]
+      "server": [
+        "ProLiant",
+        "HPUX"
+      ],
+      "storage": [
+        "MSA",
+        "StoreEasy",
+        "3PAR",
+        "StoreVirtual",
+        "StoreOnce"
+      ],
+      "switch": [
+        "ProCurve",
+        "Aruba"
+      ],
+      "tape_library": [
+        "MSL"
+      ]
     },
     {
       "name": "Huawei",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/huawei/",
-      "storage": ["OceanStor"],
-      "server": ["RH-Series"]
+      "storage": [
+        "OceanStor"
+      ],
+      "server": [
+        "RH-Series"
+      ]
     },
     {
       "name": "IBM",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/ibm/",
-      "server": ["pSeries", "iSeries", "zSeries"],
-      "storage": ["DS", "Storwize"],
-      "tape_library": ["TotalStorage", "VTL"]
+      "server": [
+        "pSeries",
+        "iSeries",
+        "zSeries"
+      ],
+      "storage": [
+        "DS",
+        "Storwize"
+      ],
+      "tape_library": [
+        "TotalStorage",
+        "VTL"
+      ]
     },
     {
       "name": "Lenovo",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/lenovo/",
-      "server": ["ThinkServer"],
-      "storage": ["DM Series", "DG Series", "DE Series"]
+      "server": [
+        "ThinkServer"
+      ],
+      "storage": [
+        "DM Series",
+        "DG Series",
+        "DE Series"
+      ]
     },
     {
       "name": "NetApp",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/netapp/",
-      "storage": ["FAS", "AFF", "E-Series"]
+      "storage": [
+        "FAS",
+        "AFF",
+        "E-Series"
+      ]
     },
     {
       "name": "Overland Tandberg",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/overland-tandberg/",
-      "tape_library": ["Neo"]
+      "tape_library": [
+        "Neo"
+      ]
     },
     {
       "name": "QNAP",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/qnap/",
-      "storage": ["NAS-Storage"]
+      "storage": [
+        "NAS-Storage"
+      ]
     },
     {
       "name": "Quantum",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/quantum/",
-      "tape_library": ["Scalar"]
+      "tape_library": [
+        "Scalar"
+      ]
     },
     {
       "name": "StorageTek",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/storagetek/",
-      "tape_library": ["SL-Series"]
+      "tape_library": [
+        "SL-Series"
+      ]
     },
     {
       "name": "Supermicro",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/supermicro/",
-      "server": ["SuperServer"]
+      "server": [
+        "SuperServer"
+      ]
     },
     {
       "name": "Synology",
       "url": "https://www.itris.de/it-hardware-wartung/unterstuetzte-hersteller-produkte/synology/",
-      "storage": ["NAS-Storage"]
+      "storage": [
+        "NAS-Storage"
+      ]
     }
-  ]
+  ],
+  "last_checked_at": "2026-03-24",
+  "source_reachable": true,
+  "source_hash": "c0a20df1d551ef92beae38fb015b6f0988075079fcb184ff38655adf4dc2eb81",
+  "source_changed_at": "2026-03-24",
+  "refresh_note": "Initial source checksum recorded."
 }
