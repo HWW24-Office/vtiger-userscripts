@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.5.9
+// @version      1.6.4
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.5.9';
+  const HW24_VERSION = '1.6.4';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -314,6 +314,456 @@
     }
   ];
 
+  const EVERNEX_MATRIX_RULES = [
+    {
+      manufacturer: 'Brocade',
+      aliases: ['brocade', 'silkworm', 'dcx'],
+      families: [
+        /\b(?:g6xx|65xx|5xxx|silkworm|dcx(?:\s*series)?)\b/i
+      ]
+    },
+    {
+      manufacturer: 'BULL',
+      aliases: ['bull', 'bullion', 'bullsequana', 'escala', 'novascale'],
+      families: [
+        /\b(?:escala|bullion|bullsequana|novascale)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Cisco',
+      aliases: ['cisco', 'catalyst', 'business series', 'nexus', 'isr', 'asr', 'mds', 'ucs', 'sns', 'esa', 'asa'],
+      families: [
+        /\b(?:catalyst|business\s*series|nexus|isr|asr|mds|ucs\s*[bc]-?series|sns|esa|asa)\b/i
+      ]
+    },
+    {
+      manufacturer: 'DEC',
+      aliases: ['dec', 'alpha server', 'alpha station', 'vax', 'pdp'],
+      families: [
+        /\b(?:alpha\s*server|alpha\s*station|vax|pdp)\b/i
+      ]
+    },
+    {
+      manufacturer: 'DELL EMC',
+      aliases: ['dell', 'dell emc', 'emc', 'powerswitch', 'powerconnect', 'force10', 'connectrix', 'poweredge', 'precision', 'vxrail', 'powervault', 'equallogic', 'compellent', 'vnx', 'clariion', 'celerra', 'centera', 'symmetrix', 'data domain', 'isilon', 'vblock', 'xtremio', 'xtremsf', 'unity'],
+      families: [
+        /\b(?:powerswitch\s*[ns]?\s*series|networking\s*[cs]-?series|powerconnect\s*w\s*series|force10|connectrix|poweredge|poweredge\s*xc|precision|vxrail|powervault|equallogic|compellent|vnxe?|clariion|celerra|centera|symmetrix\s*-?\s*(?:dmx|vmax)|data\s*domain|isilon|vblock|xtremio|xtremsf|unity\s*xt?)\b/i
+      ]
+    },
+    {
+      manufacturer: 'EXTREME NETWORKS',
+      aliases: ['extreme', 'extreme networks', 'netiron'],
+      families: [
+        /\b(?:netiron\s*ces\s*series|netiron)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Fujitsu',
+      aliases: ['fujitsu', 'primergy', 'eternus', 'primepower', 'sparc'],
+      families: [
+        /\b(?:primergy|eternus(?:\s*lt)?|primepower|sparc\s*[mt]\s*series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'HITACHI',
+      aliases: ['hitachi', 'computeblade', 'computerack', 'vsp', 'hus', 'ams'],
+      families: [
+        /\b(?:computeblade|computerack|vsp\s*g?|hus-?vm|hus|ams)\b/i
+      ]
+    },
+    {
+      manufacturer: 'HPE',
+      aliases: ['hpe', 'hp', 'proliant', 'apollo', 'integrity', 'hp9000', 'superdome', 'bladesystem', 'synergy', 'storeever', 'storageworks', 'msa', 'eva', 'lefthand', '3par', 'storeonce', 'storeeasy', 'storevirtual', 'officeconnect', 'a7500', 'aruba'],
+      families: [
+        /\b(?:proliant(?:\s*dx)?|apollo|integrity|hp9000|superdome|bladesystem|synergy|storeever\s*(?:msl|esl|autoloaders?)?|storageworks\s*(?:esl|msl|autoloaders?)?|msa\s*2000?|eva|xp12000\/?xp24000|lefthand\s*p4000|3par|storeonce|storeeasy|storevirtual|officeconnect|a7500\s*series|aruba|b-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'IBM',
+      aliases: ['ibm', 'ts2900', 'ts3100', 'ts3200', 'ts3310', 'ts3400', 'ts3500', 'ts4300', 'ts4500', 'blade center', 'hmc', 'rs6000', 'power systems', 'thinkserver', 'pureflex', 'idataplex', 'nextscale', 'storwize', 'flashsystem', 'ds6000', 'ds8000', 'xiv', 'svc'],
+      families: [
+        /\b(?:ts2900|ts3100|ts3200|ts3310|ts3400|ts3500|ts4300|ts4500|blade\s*center|hmc|rs6000|p-?series|power\s*systems|i-?series|x-?series|z-?series|thinkserver|pureflex\s*system|idataplex|nextscale|n-?series|fastt|ds-?series|storwize|flashsystem|ds6000|ds8000|xiv|svc)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Juniper',
+      aliases: ['juniper', 'isg', 'qfx', 'srx', 'ex series', 'j series'],
+      families: [
+        /\b(?:isg\s*series|qfx\s*series|srx\s*series|ex\s*series|j\s*series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'LENOVO',
+      aliases: ['lenovo', 'thinksystem', 'thinkagyle', 'thinkagile', 'pureflex'],
+      families: [
+        /\b(?:thinksystem\s*(?:de|dm)?\s*series|thinksystem|thinkag(?:y|i)le(?:\s*hx)?(?:\s*nutanix\s*appliance)?|pureflex\s*system)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Netapp',
+      aliases: ['netapp', 'aff', 'fas', 'gf series', 'sa series', 'f series', 'e series'],
+      families: [
+        /\b(?:aff\s*series|fas\s*series|v\s*series|gf\s*series|sa\s*series|f\s*series|e\s*series|aff|fas)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Overland-Tandberg',
+      aliases: ['overland', 'tandberg', 'neo'],
+      families: [
+        /\b(?:neo\s*200s?\s*-\s*400s?|neo\s*2000\s*-\s*8000|neo\s*2000e\s*-\s*4000e|neo\s*s\s*t24\s*-\s*t48|neo\b)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Quantum',
+      aliases: ['quantum', 'scalar', 'superloader', 'lto', 'dlt', 'sdlt', 'dat'],
+      families: [
+        /\b(?:scalar\s*i\s*series|superloader\s*3|lto|dat|dlt|sdlt)\b/i
+      ]
+    },
+    {
+      manufacturer: 'RUCKUS',
+      aliases: ['ruckus'],
+      families: []
+    },
+    {
+      manufacturer: 'SUN Oracle',
+      aliases: ['sun', 'oracle', 'storagetek', 'storedge', 'netra', 'sparc', 'sun fire', 'sun blade', 'sun enterprise'],
+      families: [
+        /\b(?:storedge\s*l\w*|storagetek\s*l\w*|storagetek\s*sl(?:8500|3000|150)|t10000|9840|9940|storedge\s*99x|storage\s*tek\s*6xxx|storage\s*25xx|storage\s*j4xxx|storedge\s*3xxx|fujitsu\s*server\s*m1[02]-?series|oracle\s*server\s*x[5-7]-?series|sparc\s*m-?series|sparc\s*t[345]-?series|sun\s*blade|sun\s*enterprise|sun\s*fire|sun\s*server\s*x4-?series|sun\s*sparc\s*enterprise\s*[mt]-?series|ultra|netra)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Supermicro',
+      aliases: ['supermicro', 'superblade', 'microblade', 'superstorage', 'a+ server', 'superserver'],
+      families: [
+        /\b(?:superblade|microblade|superstorage|a\+\s*server|superserver)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Synology',
+      aliases: ['synology', 'rs-serie', 'rc-serie', 'ds-serie'],
+      families: [
+        /\b(?:rs-?serie|rc-?serie|ds-?serie)\b/i
+      ]
+    }
+  ];
+
+  const ITRIS_MATRIX_RULES = [
+    {
+      manufacturer: 'APC',
+      aliases: ['apc', 'rack-usv', 'ups'],
+      families: [
+        /\b(?:rack-?usv|ups)\b/i
+      ]
+    },
+    {
+      manufacturer: 'AURES',
+      aliases: ['aures', 'kassensystem'],
+      families: [
+        /\b(?:aures|kassensystem(?:e)?)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Brocade',
+      aliases: ['brocade', 'idx', 'vdx', 'san', 'dcx'],
+      families: [
+        /\b(?:idx|vdx|san|dcx)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Cisco',
+      aliases: ['cisco', 'ucs', 'catalyst', 'nexus'],
+      families: [
+        /\b(?:ucs|catalyst|nexus)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Dell EMC',
+      aliases: ['dell', 'dell emc', 'emc', 'poweredge', 'powervault', 'datadomain', 'data domain', 'vxrail', 'ecx', 'unity', 'vmax', 'connectrix', 'equallogic', 'isilon'],
+      families: [
+        /\b(?:poweredge|powervault|data\s*domain|datadomain|vxrail|ecx|unity|vmax|connectrix|equallogic|isilon)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Eaton',
+      aliases: ['eaton', 'rack-usv', 'ups'],
+      families: [
+        /\b(?:rack-?usv|ups)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Fujitsu',
+      aliases: ['fujitsu', 'rx-series', 'rx series', 'eternus', 'cs-series', 'cs series'],
+      families: [
+        /\b(?:rx-?series|eternus|cs-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Hitachi',
+      aliases: ['hitachi', 'vsp', 'hus', 'hnas', 'ams'],
+      families: [
+        /\b(?:vsp|hus|hnas|ams)\b/i
+      ]
+    },
+    {
+      manufacturer: 'HPE',
+      aliases: ['hpe', 'hp', 'proliant', 'hpux', 'hp-ux', 'msa', 'storeeasy', '3par', 'storevirtual', 'storeonce', 'procurve', 'aruba', 'msl'],
+      families: [
+        /\b(?:proliant|hp-?ux|msa|storeeasy|3par|storevirtual|storeonce|procurve|aruba|msl)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Huawei',
+      aliases: ['huawei', 'oceanstor', 'rh-series', 'rh series'],
+      families: [
+        /\b(?:oceanstor|rh-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'IBM',
+      aliases: ['ibm', 'pseries', 'iseries', 'zseries', 'ds', 'storwize', 'totalstorage', 'vtl'],
+      families: [
+        /\b(?:pseries|iseries|zseries|storwize|totalstorage|vtl|ds\d*|\bds\b)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Lenovo',
+      aliases: ['lenovo', 'thinkserver', 'dm series', 'dg series', 'de series'],
+      families: [
+        /\b(?:thinkserver|dm\s*series|dg\s*series|de\s*series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'NetApp',
+      aliases: ['netapp', 'fas', 'aff', 'e-series', 'e series'],
+      families: [
+        /\b(?:fas|aff|e-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Overland Tandberg',
+      aliases: ['overland', 'tandberg', 'neo'],
+      families: [
+        /\bneo\b/i
+      ]
+    },
+    {
+      manufacturer: 'QNAP',
+      aliases: ['qnap', 'nas-storage', 'nas storage'],
+      families: [
+        /\b(?:nas-?storage|qnap)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Quantum',
+      aliases: ['quantum', 'scalar'],
+      families: [
+        /\bscalar\b/i
+      ]
+    },
+    {
+      manufacturer: 'StorageTek',
+      aliases: ['storagetek', 'sl-series', 'sl series'],
+      families: [
+        /\b(?:storagetek|sl-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Supermicro',
+      aliases: ['supermicro', 'superserver'],
+      families: [
+        /\bsuperserver\b/i
+      ]
+    },
+    {
+      manufacturer: 'Synology',
+      aliases: ['synology', 'nas-storage', 'nas storage'],
+      families: [
+        /\b(?:nas-?storage|synology)\b/i
+      ]
+    }
+  ];
+
+  const DIS_MATRIX_RULES = [
+    {
+      manufacturer: 'Fujitsu',
+      aliases: ['fujitsu', 'primergy', 'primepower', 'primeflex', 'fibrecat', 'eternus', 'sparc enterprise'],
+      families: [
+        /\b(?:primergy|primepower|primeflex|fibrecat|eternus\s*(?:dx|cs|lt)?|sparc\s*enterprise)\b/i
+      ]
+    },
+    {
+      manufacturer: 'HP',
+      aliases: ['hp', 'hpe', 'proliant', 'integrity', 'msa', 'eva', 'lefthand', '3par', 'msl', 'nimble', 'virtual store'],
+      families: [
+        /\b(?:proliants?|integrity|msa|eva|lefthand|3par|msl|nimble|virtual\s*store)\b/i
+      ]
+    },
+    {
+      manufacturer: 'IBM',
+      aliases: ['ibm', 'xseries', 'pseries', 'iseries', 'nseries', 'ds', 'svc', 'tape libraries', 'tape library'],
+      families: [
+        /\b(?:xseries|pseries|iseries|nseries|ds\s*storage|\bds\b|svc|tape\s*librar(?:y|ies))\b/i
+      ]
+    },
+    {
+      manufacturer: 'Dell',
+      aliases: ['dell', 'poweredge', 'powervault me', 'powerstore', 'equallogic', 'md serie', 'compellent', 'ml tape libraries', 'clariion', 'celera', 'centera', 'vnx', 'unity', 'datadomain', 'data domain', 'symmetrix dmx', 'vmax', 'vplex'],
+      families: [
+        /\b(?:poweredge|powervault\s*me|powerstore|equallogic|md\s*serie|compellent|ml\s*tape\s*librar(?:y|ies)|clariion|celera|centera|vnx|unity|data\s*domain|datadomain|symmetrix\s*dmx|vmax|vplex)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Lenovo',
+      aliases: ['lenovo', 'thinksystem', 'v3', 'v5'],
+      families: [
+        /\b(?:thinksystem(?:e)?\s*(?:sr|de|dm)?|v3\d{3}|v5\d{3})\b/i
+      ]
+    },
+    {
+      manufacturer: 'Sun / Oracle',
+      aliases: ['sun', 'oracle', 'sun fire', 'sun enterprise', 'store edge', 'storage j4', 'sun tek', 'oracle fs', 'fs1'],
+      families: [
+        /\b(?:sun\s*fire|sun\s*enterpr(?:ie|ei)se|store\s*edge\s*99x|storage\s*j4\d+|sun\s*tek\s*librar(?:y|ies)|sun\s*storage\s*edge|oracle\s*fs\s*fs1\s*san|fs1\s*san)\b/i
+      ]
+    },
+    {
+      manufacturer: 'NetApp',
+      aliases: ['netapp', 'fas', 'e-series', 'aff-series', 'aff'],
+      families: [
+        /\b(?:fas|e-?series|aff-?series|aff)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Hitachi',
+      aliases: ['hitachi', 'vsp g', 'hus', 'ams', 'thunder', 'tagmastore'],
+      families: [
+        /\b(?:vsp\s*g-?\s*series|vsp\s*g|hus|ams|thunder|tagmastore)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Huawei',
+      aliases: ['huawei', 'oceanstor'],
+      families: [
+        /\boceanstor\b/i
+      ]
+    },
+    {
+      manufacturer: 'Quantum',
+      aliases: ['quantum', 'adic', 'scalar'],
+      families: [
+        /\b(?:adic|scalar)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Overland Tandberg',
+      aliases: ['overland', 'tandberg', 'neo'],
+      families: [
+        /\b(?:neo\s*serie|neo)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Switches',
+      aliases: ['brocade', 'cisco', 'procurve', 'aruba', 'switch'],
+      families: [
+        /\b(?:switche?s?|brocade|cisco|procurve|aruba)\b/i
+      ]
+    }
+  ];
+
+  const NORDIC_MATRIX_RULES = [
+    {
+      manufacturer: 'HPE',
+      aliases: ['hpe', 'hp', 'proliant', 'blade system', 'integrity', 'hp9000', 'superdome', '3par', 'msa', 'eva', 'xp-series', 'lefthand', 'storeever', 'storageworks', 'aruba', 'b-series'],
+      families: [
+        /\b(?:proliant|blade\s*system|integrity|hp9000|superdome|3par|msa|eva|xp-?series|lefthand|storeever|storageworks|aruba|b-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'IBM',
+      aliases: ['ibm', 'x-series', 'p-series', 'i-series', 'blade center', 'storwize', 'ds-series', 'n-series', 'flashsystem', 'xiv', 'svc', 'ts-series'],
+      families: [
+        /\b(?:x-?series|p-?series|i-?series|blade\s*center|storwize|ds-?series|n-?series|flashsystem|xiv|svc|ts-?series|network)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Dell EMC',
+      aliases: ['dell', 'emc', 'poweredge', 'precision', 'vnx', 'data domain', 'datadomain', 'unity', 'vmax', 'isilon', 'xtremio', 'clariion', 'celerra', 'centerra', 'equallogic', 'powervault', 'powerswitch', 'powerconnect', 'c-series', 's-series'],
+      families: [
+        /\b(?:poweredge|precision|vnx|data\s*domain|datadomain|unity|vmax|isilon|xtremio|clariion|celerra|centerra|equallogic|powervault|powerswitch|powerconnect|c-?series|s-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Fujitsu',
+      aliases: ['fujitsu', 'primergy', 'primepower', 'sparc', 'eternus'],
+      families: [
+        /\b(?:primergy|primepower|sparc|eternus)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Lenovo',
+      aliases: ['lenovo', 'thinksystem', 'de-series', 'dm-series'],
+      families: [
+        /\b(?:thinksystem|de-?series|dm-?series)\b/i
+      ]
+    },
+    {
+      manufacturer: 'NetApp',
+      aliases: ['netapp', 'fas-series', 'e-series', 'f-series', 'gf-series', 'sa-series', 'v-series'],
+      families: [
+        /\b(?:fas-?series|e-?series|f-?series|gf-?series|sa-?series|v-?series|fas|aff)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Hitachi',
+      aliases: ['hitachi', 'computeblade', 'g-series', 'vsp', 'usp', 'hus', 'ams'],
+      families: [
+        /\b(?:computeblade|g-?series|vsp|usp|hus|ams)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Cisco',
+      aliases: ['cisco', 'ucs', 'catalyst', 'nexus', 'mds', 'business'],
+      families: [
+        /\b(?:ucs|catalyst|nexus|mds|business)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Juniper',
+      aliases: ['juniper', 'srx', 'isg', 'qfx', 'ex', 'j'],
+      families: [
+        /\b(?:srx|isg|qfx|ex|j)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Brocade/Broadcom',
+      aliases: ['brocade', 'broadcom', 'dcx-series', 'silkworm', '5-series', '65-series', 'g6-series'],
+      families: [
+        /\b(?:dcx-?series|silkwo?rm|5-?series|65-?series|g6-?series|dcx)\b/i
+      ]
+    },
+    {
+      manufacturer: 'Sun Oracle',
+      aliases: ['sun', 'oracle', 't-series', 'x-series', 'm-series', 'sparc', 'fire', 'netra', 'blade', 'storedge', 'storagetek'],
+      families: [
+        /\b(?:t-?series|x-?series|m-?series|sparc|fire|netra|blade|storedge|storagetek)\b/i
+      ]
+    }
+  ];
+
+  const REMOTE_MATRIX_BASE_URL = 'https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/';
+  const REMOTE_MATRIX_FILES = {
+    PP: 'parkplace-supported-products-detailed.json',
+    TG: 'evernex-supported-products.json',
+    ITRIS: 'itris-supported-products.json',
+    DIS: 'dis-supported-products.json',
+    Nordic: 'nordic-supported-products.json'
+  };
+  const MATRIX_PROVIDER_KEYS = ['PP', 'TG', 'ITRIS', 'DIS', 'Nordic'];
+  const MATRIX_CACHE_PREFIX = 'hw24:providerMatrix:';
+  const MATRIX_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  const loadedRemoteCatalogs = Object.create(null);
+
   function normalizeForMatrix(text) {
     return (text || '')
       .toString()
@@ -328,7 +778,106 @@
     return [...new Set(arr.filter(Boolean))];
   }
 
-  function evaluateParkPlaceDescription(descText) {
+  function safeJsonParse(text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  function cleanupModelToken(token) {
+    return normalizeForMatrix(token)
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/\b(?:series|serie|model|models|devices|gerate|geraete)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function deriveAliasesFromBrandName(name) {
+    const raw = (name || '').toString();
+    const parts = raw
+      .split(/[\/,&+]|\band\b|\bund\b/gi)
+      .map(s => cleanupModelToken(s))
+      .filter(Boolean);
+
+    const base = cleanupModelToken(raw);
+    return uniq([base, ...parts]).filter(a => a.length >= 2);
+  }
+
+  function extractCatalogProducts(brand) {
+    const buckets = [
+      'products', 'server', 'storage', 'network', 'hci', 'mainframe', 'software',
+      'library', 'tape_library', 'switch', 'netzwerk', 'usv', 'pos'
+    ];
+
+    const out = [];
+    for (const key of buckets) {
+      const val = brand?.[key];
+      if (Array.isArray(val)) out.push(...val);
+    }
+    return out;
+  }
+
+  function parseRemoteCatalog(rawJson) {
+    const brands = Array.isArray(rawJson?.brands) ? rawJson.brands : [];
+    return brands.map(brand => {
+      const manufacturer = (brand?.name || '').toString().trim();
+      const aliases = deriveAliasesFromBrandName(manufacturer);
+      const models = uniq(extractCatalogProducts(brand)
+        .map(item => cleanupModelToken((item || '').toString()))
+        .filter(item => item && item.length >= 3));
+
+      return { manufacturer, aliases, models };
+    }).filter(entry => entry.manufacturer && entry.aliases.length);
+  }
+
+  async function loadRemoteCatalog(providerKey) {
+    if (Object.prototype.hasOwnProperty.call(loadedRemoteCatalogs, providerKey)) {
+      return loadedRemoteCatalogs[providerKey];
+    }
+
+    const fileName = REMOTE_MATRIX_FILES[providerKey];
+    if (!fileName) {
+      loadedRemoteCatalogs[providerKey] = null;
+      return null;
+    }
+
+    const cacheKey = MATRIX_CACHE_PREFIX + providerKey;
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      const cached = cachedRaw ? safeJsonParse(cachedRaw) : null;
+      const isFresh = cached && typeof cached.ts === 'number' && (Date.now() - cached.ts) < MATRIX_CACHE_TTL_MS;
+
+      if (isFresh && cached.data) {
+        const parsed = parseRemoteCatalog(cached.data);
+        loadedRemoteCatalogs[providerKey] = parsed;
+        return parsed;
+      }
+    } catch {}
+
+    try {
+      const url = REMOTE_MATRIX_BASE_URL + fileName + '?t=' + Date.now();
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const data = await response.json();
+      const parsed = parseRemoteCatalog(data);
+
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data }));
+      } catch {}
+
+      loadedRemoteCatalogs[providerKey] = parsed;
+      return parsed;
+    } catch (err) {
+      console.warn('[HW24 Matrix] Remote catalog load failed for', providerKey, err?.message || err);
+      loadedRemoteCatalogs[providerKey] = null;
+      return null;
+    }
+  }
+
+  function evaluateDescriptionAgainstCatalog(descText, catalog) {
     const raw = (descText || '').toString().trim();
     if (!raw) {
       return {
@@ -343,7 +892,63 @@
     const detectedManufacturers = [];
     const matchedFamilies = [];
 
-    for (const rule of PARK_PLACE_MATRIX_RULES) {
+    for (const item of (catalog || [])) {
+      const manufacturerHit = item.aliases.some(alias => alias && normalized.includes(alias));
+      if (!manufacturerHit) continue;
+
+      detectedManufacturers.push(item.manufacturer);
+
+      const modelHit = item.models.find(model => model && normalized.includes(model));
+      if (modelHit) {
+        matchedFamilies.push(`${item.manufacturer}: ${modelHit}`);
+      }
+    }
+
+    const manufacturers = uniq(detectedManufacturers);
+    const matched = uniq(matchedFamilies);
+
+    if (matched.length) {
+      return {
+        status: 'ALLOW',
+        reason: 'Mindestens ein Hersteller + Modell/Familie ist in der Matrix enthalten.',
+        manufacturers,
+        matched
+      };
+    }
+
+    if (manufacturers.length) {
+      return {
+        status: 'WARN_MISMATCH',
+        reason: 'Hersteller erkannt, aber kein eindeutiges Modell/Familie aus der Matrix gefunden.',
+        manufacturers,
+        matched
+      };
+    }
+
+    return {
+      status: 'WARN_INCOMPLETE',
+      reason: 'Kein Matrix-Hersteller in der Beschreibung erkannt.',
+      manufacturers,
+      matched
+    };
+  }
+
+  function evaluateDescriptionAgainstRules(descText, rules) {
+    const raw = (descText || '').toString().trim();
+    if (!raw) {
+      return {
+        status: 'WARN_INCOMPLETE',
+        reason: 'Beschreibung ist leer.',
+        manufacturers: [],
+        matched: []
+      };
+    }
+
+    const normalized = normalizeForMatrix(raw);
+    const detectedManufacturers = [];
+    const matchedFamilies = [];
+
+    for (const rule of (rules || [])) {
       const manuHit = rule.aliases.some(alias => normalized.includes(normalizeForMatrix(alias)));
       if (!manuHit) continue;
 
@@ -387,6 +992,39 @@
     };
   }
 
+  async function evaluateProviderDescription(providerKey, descText, fallbackRules) {
+    const remoteCatalog = await loadRemoteCatalog(providerKey);
+    if (Array.isArray(remoteCatalog) && remoteCatalog.length) {
+      const remoteResult = evaluateDescriptionAgainstCatalog(descText, remoteCatalog);
+      remoteResult.source = 'remote';
+      return remoteResult;
+    }
+
+    const fallbackResult = evaluateDescriptionAgainstRules(descText, fallbackRules || []);
+    fallbackResult.source = 'fallback';
+    return fallbackResult;
+  }
+
+  async function evaluateParkPlaceDescription(descText) {
+    return evaluateProviderDescription('PP', descText, PARK_PLACE_MATRIX_RULES);
+  }
+
+  async function evaluateEvernexDescription(descText) {
+    return evaluateProviderDescription('TG', descText, EVERNEX_MATRIX_RULES);
+  }
+
+  async function evaluateItrisDescription(descText) {
+    return evaluateProviderDescription('ITRIS', descText, ITRIS_MATRIX_RULES);
+  }
+
+  async function evaluateDisDescription(descText) {
+    return evaluateProviderDescription('DIS', descText, DIS_MATRIX_RULES);
+  }
+
+  async function evaluateNordicDescription(descText) {
+    return evaluateProviderDescription('Nordic', descText, NORDIC_MATRIX_RULES);
+  }
+
   function confirmParkPlaceMatrixWarning(result) {
     if (!result || result.status === 'ALLOW') return true;
 
@@ -406,6 +1044,98 @@
 
     if (!proceed) {
       console.log('[HW24 Park Place] User aborted after matrix warning', result);
+    }
+    return proceed;
+  }
+
+  function confirmEvernexMatrixWarning(result) {
+    if (!result || result.status === 'ALLOW') return true;
+
+    const manufacturerInfo = result.manufacturers.length ? result.manufacturers.join(', ') : 'keine';
+    const matchedInfo = result.matched.length ? result.matched.join(' | ') : 'kein Match';
+    const title = result.status === 'WARN_MISMATCH'
+      ? '⚠️ Evernex Matrix Warnung (Modell/Familie nicht eindeutig)'
+      : '⚠️ Evernex Matrix Warnung (zu wenig Informationen)';
+
+    const proceed = confirm(
+      `${title}\n\n` +
+      `${result.reason}\n` +
+      `Erkannte Hersteller: ${manufacturerInfo}\n` +
+      `Matrix-Matches: ${matchedInfo}\n\n` +
+      'Trotzdem mit Evernex Anfrage fortfahren?'
+    );
+
+    if (!proceed) {
+      console.log('[HW24 Evernex] User aborted after matrix warning', result);
+    }
+    return proceed;
+  }
+
+  function confirmItrisMatrixWarning(result) {
+    if (!result || result.status === 'ALLOW') return true;
+
+    const manufacturerInfo = result.manufacturers.length ? result.manufacturers.join(', ') : 'keine';
+    const matchedInfo = result.matched.length ? result.matched.join(' | ') : 'kein Match';
+    const title = result.status === 'WARN_MISMATCH'
+      ? '⚠️ ITRIS Matrix Warnung (Modell/Familie nicht eindeutig)'
+      : '⚠️ ITRIS Matrix Warnung (zu wenig Informationen)';
+
+    const proceed = confirm(
+      `${title}\n\n` +
+      `${result.reason}\n` +
+      `Erkannte Hersteller: ${manufacturerInfo}\n` +
+      `Matrix-Matches: ${matchedInfo}\n\n` +
+      'Trotzdem mit ITRIS Anfrage fortfahren?'
+    );
+
+    if (!proceed) {
+      console.log('[HW24 ITRIS] User aborted after matrix warning', result);
+    }
+    return proceed;
+  }
+
+  function confirmDisMatrixWarning(result) {
+    if (!result || result.status === 'ALLOW') return true;
+
+    const manufacturerInfo = result.manufacturers.length ? result.manufacturers.join(', ') : 'keine';
+    const matchedInfo = result.matched.length ? result.matched.join(' | ') : 'kein Match';
+    const title = result.status === 'WARN_MISMATCH'
+      ? '⚠️ DIS Matrix Warnung (Modell/Familie nicht eindeutig)'
+      : '⚠️ DIS Matrix Warnung (zu wenig Informationen)';
+
+    const proceed = confirm(
+      `${title}\n\n` +
+      `${result.reason}\n` +
+      `Erkannte Hersteller: ${manufacturerInfo}\n` +
+      `Matrix-Matches: ${matchedInfo}\n\n` +
+      'Trotzdem mit DIS Anfrage fortfahren?'
+    );
+
+    if (!proceed) {
+      console.log('[HW24 DIS] User aborted after matrix warning', result);
+    }
+    return proceed;
+  }
+
+  function confirmNordicMatrixWarning(result) {
+    if (!result || result.status === 'ALLOW') return true;
+
+    const manufacturerInfo = result.manufacturers.length ? result.manufacturers.join(', ') : 'keine';
+    const matchedInfo = result.matched.length ? result.matched.join(' | ') : 'kein Match';
+    const title = result.status === 'WARN_MISMATCH'
+      ? '⚠️ Nordic Matrix Warnung (Modell/Familie nicht eindeutig)'
+      : '⚠️ Nordic Matrix Warnung (zu wenig Informationen)';
+
+    const proceed = confirm(
+      `${title}\n\n` +
+      `${result.reason}\n` +
+      `Erkannte Hersteller: ${manufacturerInfo}\n` +
+      `Matrix-Matches: ${matchedInfo}\n\n` +
+      'Trotzdem mit Nordic Anfrage fortfahren?'
+    );
+
+    if (!proceed) {
+      console.log('[HW24 Nordic] User aborted after matrix warning', result);
     }
     return proceed;
   }
@@ -451,8 +1181,33 @@
   }
 
   async function runParkPlacePrecheck(descText) {
-    const matrixResult = evaluateParkPlaceDescription(descText);
+    const matrixResult = await evaluateParkPlaceDescription(descText);
+    console.log('[HW24 Matrix] PP precheck source:', matrixResult?.source || 'unknown');
     return confirmParkPlaceMatrixWarning(matrixResult);
+  }
+
+  async function runEvernexPrecheck(descText) {
+    const matrixResult = await evaluateEvernexDescription(descText);
+    console.log('[HW24 Matrix] TG precheck source:', matrixResult?.source || 'unknown');
+    return confirmEvernexMatrixWarning(matrixResult);
+  }
+
+  async function runItrisPrecheck(descText) {
+    const matrixResult = await evaluateItrisDescription(descText);
+    console.log('[HW24 Matrix] ITRIS precheck source:', matrixResult?.source || 'unknown');
+    return confirmItrisMatrixWarning(matrixResult);
+  }
+
+  async function runDisPrecheck(descText) {
+    const matrixResult = await evaluateDisDescription(descText);
+    console.log('[HW24 Matrix] DIS precheck source:', matrixResult?.source || 'unknown');
+    return confirmDisMatrixWarning(matrixResult);
+  }
+
+  async function runNordicPrecheck(descText) {
+    const matrixResult = await evaluateNordicDescription(descText);
+    console.log('[HW24 Matrix] Nordic precheck source:', matrixResult?.source || 'unknown');
+    return confirmNordicMatrixWarning(matrixResult);
   }
 
   async function runDuplicateWarning(requestTypeLabel, targetLabel, requestMarker) {
@@ -2078,6 +2833,26 @@
       if (!shouldProceed) return;
     }
 
+    if (provider.key === 'TG') {
+      const shouldProceed = await runEvernexPrecheck(pendingDescriptionText);
+      if (!shouldProceed) return;
+    }
+
+    if (provider.key === 'ITRIS') {
+      const shouldProceed = await runItrisPrecheck(pendingDescriptionText);
+      if (!shouldProceed) return;
+    }
+
+    if (provider.key === 'DIS') {
+      const shouldProceed = await runDisPrecheck(pendingDescriptionText);
+      if (!shouldProceed) return;
+    }
+
+    if (provider.key === 'Nordic') {
+      const shouldProceed = await runNordicPrecheck(pendingDescriptionText);
+      if (!shouldProceed) return;
+    }
+
     const providerMarker = 'Provider-Anfrage: ' + config.label + ' angefragt';
     const dedupeProceed = await runDuplicateWarning('Provider', config.label, providerMarker);
     if (!dedupeProceed) return;
@@ -2324,6 +3099,11 @@
   function init() {
     injectDetailToolbar();
     injectDealerToolbar();
+    setTimeout(() => {
+      for (const providerKey of MATRIX_PROVIDER_KEYS) {
+        loadRemoteCatalog(providerKey).catch(() => {});
+      }
+    }, 0);
     if (!document.getElementById(DETAIL_TOOLBAR_ID)) {
       setTimeout(injectDetailToolbar, 500);
       setTimeout(injectDetailToolbar, 1500);
