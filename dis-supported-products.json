@@ -1,0 +1,139 @@
+{
+  "source": "https://www.dis-daten-it.de/wartung.html",
+  "captured_at": "2026-03-24",
+  "brands": [
+    {
+      "name": "Fujitsu",
+      "products": [
+        "Primergy",
+        "Primepower",
+        "Primeflex",
+        "Fibrecat",
+        "Eternus DX",
+        "Eternus CS",
+        "Eternus LT",
+        "Sparc Enterprise"
+      ]
+    },
+    {
+      "name": "HP",
+      "products": [
+        "ProLiant",
+        "Integrity",
+        "MSA",
+        "EVA",
+        "LeftHand",
+        "3PAR",
+        "MSL",
+        "Nimble",
+        "Virtual Store"
+      ]
+    },
+    {
+      "name": "IBM",
+      "products": [
+        "xSeries",
+        "pSeries",
+        "iSeries",
+        "nSeries",
+        "DS Storage",
+        "SVC",
+        "IBM Tape Libraries"
+      ]
+    },
+    {
+      "name": "Dell",
+      "products": [
+        "PowerEdge",
+        "PowerVault ME",
+        "PowerStore",
+        "EqualLogic",
+        "MD Serie",
+        "Compellent",
+        "ML Tape Libraries"
+      ]
+    },
+    {
+      "name": "Dell EMC",
+      "products": [
+        "Clariion",
+        "Celera",
+        "Centera",
+        "VNX",
+        "Unity",
+        "DataDomain",
+        "Symmetrix DMX",
+        "VMAX",
+        "VPLEX"
+      ]
+    },
+    {
+      "name": "Lenovo",
+      "products": [
+        "ThinkSystem SR",
+        "ThinkSystem DE",
+        "ThinkSystem DM",
+        "V3xxx",
+        "V5xxx"
+      ]
+    },
+    {
+      "name": "Sun / Oracle",
+      "products": [
+        "Sun Fire",
+        "Sun Enterprise",
+        "StoreEdge 99X",
+        "Storage J4xxx",
+        "Sun Tek Libraries",
+        "Sun Storage Edge",
+        "Oracle FS FS1 SAN"
+      ]
+    },
+    {
+      "name": "NetApp",
+      "products": [
+        "FAS",
+        "E-Series",
+        "AFF-Series"
+      ]
+    },
+    {
+      "name": "Hitachi",
+      "products": [
+        "VSP G-Series",
+        "HUS",
+        "AMS",
+        "Thunder",
+        "Tagmastore"
+      ]
+    },
+    {
+      "name": "Huawei",
+      "products": [
+        "OceanStor"
+      ]
+    },
+    {
+      "name": "Quantum",
+      "products": [
+        "ADIC",
+        "Scalar"
+      ]
+    },
+    {
+      "name": "Overland Tandberg",
+      "products": [
+        "Neo Serie"
+      ]
+    },
+    {
+      "name": "Switches",
+      "products": [
+        "Brocade",
+        "Cisco",
+        "HP ProCurve",
+        "Aruba"
+      ]
+    }
+  ]
+}
