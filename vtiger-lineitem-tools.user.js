@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.27
+// @version      2.7.28
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.27';
+    : '2.7.28';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -38,6 +38,23 @@
 
   const $ = id => document.getElementById(id);
   const S = s => (s || '').toString().trim();
+  const VTIGER_TAX_CONFIRM_RE = /update tax\s*&\s*charge values corresponding to selected region/i;
+
+  function withSuppressedTaxRegionConfirm(fn, fallbackValue = undefined) {
+    const originalConfirm = window.confirm;
+    window.confirm = function (message) {
+      if (VTIGER_TAX_CONFIRM_RE.test(S(message))) return true;
+      return originalConfirm.call(this, message);
+    };
+
+    try {
+      return fn();
+    } catch {
+      return fallbackValue;
+    } finally {
+      window.confirm = originalConfirm;
+    }
+  }
   const norm = s => S(s).toUpperCase().replace(/\s+/g, '');
   const uniq = a => [...new Set(a)];
 
@@ -1737,19 +1754,20 @@
           el.value = optValue;
           el.selectedIndex = i;
 
-          // Fix: Select2-spezifische Events triggern damit vtiger die Steuer neu berechnet
-          if (typeof jQuery !== 'undefined' && jQuery.fn.select2) {
-            const $el = jQuery(el);
-            $el.trigger('change');
-            $el.trigger({
-              type: 'select2:select',
-              params: { data: { id: optValue, text: el.options[i].textContent } }
-            });
-            $el.trigger('change.select2');
-          } else {
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-          }
-          triggerTaxRegionRecalculation(el);
+          withSuppressedTaxRegionConfirm(() => {
+            if (typeof jQuery !== 'undefined' && jQuery.fn.select2) {
+              const $el = jQuery(el);
+              $el.trigger('change');
+              $el.trigger({
+                type: 'select2:select',
+                params: { data: { id: optValue, text: el.options[i].textContent } }
+              });
+              $el.trigger('change.select2');
+            } else {
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            triggerTaxRegionRecalculation(el);
+          });
           return true;
         }
       }
@@ -1759,36 +1777,38 @@
     function triggerTaxRegionRecalculation(el = document.querySelector('#region_id')) {
       if (!el) return;
 
-      const jq = window.jQuery || window.$;
-      ['input', 'change', 'blur'].forEach(evt => {
-        el.dispatchEvent(new Event(evt, { bubbles: true }));
-      });
+      withSuppressedTaxRegionConfirm(() => {
+        const jq = window.jQuery || window.$;
+        ['input', 'change', 'blur'].forEach(evt => {
+          el.dispatchEvent(new Event(evt, { bubbles: true }));
+        });
 
-      if (jq) {
-        try {
-          const $el = jq(el);
-          $el.trigger('change');
-          $el.trigger('change.select2');
-          $el.trigger({ type: 'select2:select', params: { data: { id: el.value, text: el.options?.[el.selectedIndex]?.textContent || '' } } });
-        } catch { /* ignore */ }
-      }
+        if (jq) {
+          try {
+            const $el = jq(el);
+            $el.trigger('change');
+            $el.trigger('change.select2');
+            $el.trigger({ type: 'select2:select', params: { data: { id: el.value, text: el.options?.[el.selectedIndex]?.textContent || '' } } });
+          } catch { /* ignore */ }
+        }
 
-      const instance = (() => {
-        try {
-          if (window.Inventory_Edit_Js?.getInstance) return window.Inventory_Edit_Js.getInstance();
-        } catch { /* ignore */ }
-        return null;
-      })();
+        const instance = (() => {
+          try {
+            if (window.Inventory_Edit_Js?.getInstance) return window.Inventory_Edit_Js.getInstance();
+          } catch { /* ignore */ }
+          return null;
+        })();
 
-      const invoke = (ctx, fnName) => {
-        try {
-          if (ctx && typeof ctx[fnName] === 'function') ctx[fnName]();
-        } catch { /* ignore */ }
-      };
+        const invoke = (ctx, fnName) => {
+          try {
+            if (ctx && typeof ctx[fnName] === 'function') ctx[fnName]();
+          } catch { /* ignore */ }
+        };
 
-      ['calculateTax', 'calculateValues', 'calculateFinalValues', 'lineItemToTalResultCalculations'].forEach(fn => {
-        invoke(instance, fn);
-        invoke(window.Inventory_Edit_Js, fn);
+        ['calculateTax', 'calculateValues', 'calculateFinalValues', 'lineItemToTalResultCalculations'].forEach(fn => {
+          invoke(instance, fn);
+          invoke(window.Inventory_Edit_Js, fn);
+        });
       });
     }
 
@@ -2121,7 +2141,7 @@
       const beforeSnapshot = previousSnapshot ?? captureTaxFieldSnapshot();
       let snapshotChanged = !beforeSnapshot;
 
-      for (const delay of [0, 150, 350, 700, 1200, 1800]) {
+      for (const delay of [0, 250, 900]) {
         if (delay) await sleep(delay);
         triggerTaxRegionRecalculation(regionEl);
         await waitForJQueryIdle();
