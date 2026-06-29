@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.26
+// @version      2.7.27
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.26';
+    : '2.7.27';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1868,7 +1868,6 @@
       const billingCountry = getBillingCountry();
       const taxRegion = getTaxRegion();
       const taxStatus = getTaxStatusState();
-      const subjectType = getSubjectType();
       const isPurchaseOrderModule = currentModule === 'PurchaseOrder';
       const vatNumber = isPurchaseOrderModule ? '' : await fetchOrganizationVAT();
       const hasVAT = vatNumber.length > 0;
@@ -1877,189 +1876,110 @@
 
       const taxRegionLower = taxRegion.toLowerCase();
       const isAustriaTaxRegion = taxRegionLower.includes('austria');
-      const isGermanyTaxRegion = taxRegionLower.includes('germany');
       const isEUTaxRegion = taxRegionLower === 'eu';
       const isNonEUTaxRegion = taxRegionLower.includes('non-eu');
       const activeTaxFlags = Object.entries(taxStatus).filter(([, active]) => active).map(([name]) => name);
-      const hasIGFlag = taxStatus.igLieferung || taxStatus.igDreieck;
 
       const billingIsAustria = isAustria(billingCountry);
       const billingIsGermany = isGermany(billingCountry);
       const billingIsEU = !billingIsAustria && isEUCountry(billingCountry);
       const billingIsNonEU = billingCountry && !billingIsAustria && !billingIsGermany && !billingIsEU;
 
-      // ═══════════════════════════════════════════════════════════════
-      // REGEL 1: Österreich → 20% (Austria), keine Steuer-Checkbox aktiv
-      // ═══════════════════════════════════════════════════════════════
+      let expectedTaxRegion = '';
+      let expectedTaxRegionLabel = '';
+      let regionMessagePrefix = '';
+      let clearAllFlagsOnConflict = false;
+
       if (billingIsAustria) {
-        if (!isAustriaTaxRegion && taxRegion) {
-          issues.push({
-            type: 'error',
-            message: `⚠️ Kunde in Österreich → Tax Region muss "Austria" (20%) sein, nicht "${taxRegion}".`,
-            fix: () => setTaxRegion('Austria'),
-            fixLabel: 'Tax Region → Austria'
-          });
-        }
-        if (activeTaxFlags.length > 0) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ Bei österreichischen Kunden darf keine der Checkboxen "IG Lieferung", "IG Dreiecksgeschäft" oder "Nicht steuerbar" aktiv sein.',
-            fix: () => clearTaxStatusFlags(),
-            fixLabel: 'Steuer-Checkboxen deaktivieren'
-          });
-        }
-      }
-
-      // ═══════════════════════════════════════════════════════════════
-      // REGEL 2: DE/EU
-      // PurchaseOrder: UID ist irrelevant → immer EU
-      // Andere Module: mit UID → EU, ohne UID → Austria
-      // ═══════════════════════════════════════════════════════════════
-      else if (billingIsGermany || billingIsEU) {
+        expectedTaxRegion = 'Austria';
+        expectedTaxRegionLabel = 'Austria';
+        regionMessagePrefix = '⚠️ Kunde in Österreich';
+        clearAllFlagsOnConflict = true;
+      } else if (billingIsGermany || billingIsEU) {
         if (isPurchaseOrderModule) {
-          if (!isEUTaxRegion && taxRegion) {
-            issues.push({
-              type: 'error',
-              message: `⚠️ Purchase Order (DE/EU) → Tax Region muss "EU" sein, nicht "${taxRegion}".`,
-              fix: () => setTaxRegion('EU'),
-              fixLabel: 'Tax Region → EU'
-            });
-          }
-          if (taxStatus.nichtSteuerbar) {
-            issues.push({
-              type: 'error',
-              message: '⚠️ "Nicht steuerbar" darf bei Purchase Order (DE/EU) nicht aktiviert sein.',
-              fix: () => setNichtSteuerbar(false),
-              fixLabel: 'Nicht steuerbar deaktivieren'
-            });
-          }
+          expectedTaxRegion = 'EU';
+          expectedTaxRegionLabel = 'EU';
+          regionMessagePrefix = '⚠️ Purchase Order (DE/EU)';
+        } else if (hasVAT) {
+          expectedTaxRegion = 'EU';
+          expectedTaxRegionLabel = 'EU';
+          regionMessagePrefix = `⚠️ EU-Kunde mit UID (${vatNumber})`;
+        } else {
+          expectedTaxRegion = 'Austria';
+          expectedTaxRegionLabel = 'Austria" (20%)';
+          regionMessagePrefix = '⚠️ EU-Kunde ohne UID';
+          clearAllFlagsOnConflict = true;
         }
-
-        // MIT UID → EU Tax Region
-        else if (hasVAT) {
-          if (!isEUTaxRegion && taxRegion) {
-            issues.push({
-              type: 'error',
-              message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Tax Region muss "EU" sein, nicht "${taxRegion}".`,
-              fix: () => setTaxRegion('EU'),
-              fixLabel: 'Tax Region → EU'
-            });
-          }
-          if (taxStatus.nichtSteuerbar) {
-            issues.push({
-              type: 'error',
-              message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden mit UID nicht aktiviert sein.',
-              fix: () => setNichtSteuerbar(false),
-              fixLabel: 'Nicht steuerbar deaktivieren'
-            });
-          }
-        }
-
-        // OHNE UID → 20% (Austria), keine Steuer-Checkbox aktiv
-        else {
-          if (!isAustriaTaxRegion && taxRegion) {
-            issues.push({
-              type: 'error',
-              message: `⚠️ EU-Kunde ohne UID → Tax Region muss "Austria" (20%) sein, nicht "${taxRegion}".`,
-              fix: () => setTaxRegion('Austria'),
-              fixLabel: 'Tax Region → Austria'
-            });
-          }
-          if (activeTaxFlags.length > 0) {
-            issues.push({
-              type: 'error',
-              message: '⚠️ EU-Kunde ohne UID → keine der drei Steuer-Checkboxen darf aktiv sein.',
-              fix: () => clearTaxStatusFlags(),
-              fixLabel: 'Steuer-Checkboxen deaktivieren'
-            });
-          }
-        }
+      } else if (billingIsNonEU) {
+        expectedTaxRegion = 'Non-EU';
+        expectedTaxRegionLabel = 'Non-EU';
+        regionMessagePrefix = '⚠️ Drittland';
       }
 
-      // ═══════════════════════════════════════════════════════════════
-      // REGEL 4: Non-EU + Wartung → Non-EU, Nicht-steuerbar aktivieren
-      // ═══════════════════════════════════════════════════════════════
-      else if (billingIsNonEU && subjectType === 'wartung') {
-        if (!isNonEUTaxRegion && taxRegion) {
-          issues.push({
-            type: 'error',
-            message: `⚠️ Drittland + Wartung → Tax Region muss "Non-EU" sein, nicht "${taxRegion}".`,
-            fix: () => setTaxRegion('Non-EU'),
-            fixLabel: 'Tax Region → Non-EU'
-          });
-        }
-        if (!taxStatus.nichtSteuerbar) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ Drittland + Wartung → "Nicht steuerbar" muss aktiviert sein.',
-            fix: () => keepOnlyTaxStatusFlag('nichtSteuerbar'),
-            fixLabel: 'Nicht steuerbar aktivieren'
-          });
-        }
+      const applyExpectedFlags = () => {
+        if (expectedTaxRegion === 'EU') return clearTaxStatusFlags();
+        if (expectedTaxRegion === 'Non-EU') return keepOnlyTaxStatusFlag('nichtSteuerbar');
+        return clearTaxStatusFlags();
+      };
+
+      if (expectedTaxRegion === 'Austria' && !isAustriaTaxRegion && taxRegion) {
+        issues.push({
+          type: 'error',
+          message: `${regionMessagePrefix} → Tax Region muss "${expectedTaxRegionLabel}" sein, nicht "${taxRegion}".`,
+          fix: () => setTaxRegion('Austria'),
+          fixLabel: 'Tax Region → Austria'
+        });
       }
 
-      // ═══════════════════════════════════════════════════════════════
-      // REGEL 5: Non-EU + Handel → Non-EU, kein Nicht-steuerbar
-      // ═══════════════════════════════════════════════════════════════
-      else if (billingIsNonEU) {
-        if (!isNonEUTaxRegion && taxRegion) {
-          issues.push({
-            type: 'error',
-            message: `⚠️ Drittland → Tax Region muss "Non-EU" sein, nicht "${taxRegion}".`,
-            fix: () => setTaxRegion('Non-EU'),
-            fixLabel: 'Tax Region → Non-EU'
-          });
-        }
+      if (expectedTaxRegion === 'EU' && !isEUTaxRegion && taxRegion) {
+        issues.push({
+          type: 'error',
+          message: `${regionMessagePrefix} → Tax Region muss "EU" sein, nicht "${taxRegion}".`,
+          fix: () => setTaxRegion('EU'),
+          fixLabel: 'Tax Region → EU'
+        });
       }
 
-      // ═══════════════════════════════════════════════════════════════
-      // REGEL 6: Steuer-Checkboxen sind gegenseitig exklusiv
-      // ═══════════════════════════════════════════════════════════════
+      if (expectedTaxRegion === 'Non-EU' && !isNonEUTaxRegion && taxRegion) {
+        issues.push({
+          type: 'error',
+          message: `${regionMessagePrefix} → Tax Region muss "Non-EU" sein, nicht "${taxRegion}".`,
+          fix: () => setTaxRegion('Non-EU'),
+          fixLabel: 'Tax Region → Non-EU'
+        });
+      }
+
       if (activeTaxFlags.length > 1) {
-        const preferredFlag = isNonEUTaxRegion
-          ? 'nichtSteuerbar'
-          : (taxStatus.igLieferung ? 'igLieferung' : 'igDreieck');
-
         issues.push({
           type: 'error',
           message: '⚠️ Es darf maximal eine der Checkboxen "IG Lieferung", "IG Dreiecksgeschäft" oder "Nicht steuerbar" aktiv sein.',
-          fix: () => keepOnlyTaxStatusFlag(preferredFlag),
+          fix: () => applyExpectedFlags(),
           fixLabel: 'Steuer-Checkboxen bereinigen'
         });
       }
 
-      // ═══════════════════════════════════════════════════════════════
-      // REGEL 7: Checkboxen müssen zur Tax Region passen
-      // ═══════════════════════════════════════════════════════════════
-      if (taxStatus.nichtSteuerbar && !isNonEUTaxRegion) {
+      if (expectedTaxRegion === 'EU' && taxStatus.nichtSteuerbar) {
         issues.push({
           type: 'error',
-          message: `⚠️ "Nicht steuerbar" ist nur mit Tax Region "Non-EU" erlaubt, aktuell aber "${taxRegion}".`,
-          fix: () => {
-            keepOnlyTaxStatusFlag('nichtSteuerbar');
-            setTaxRegion('Non-EU');
-          },
-          fixLabel: 'Nicht steuerbar → Non-EU'
+          message: '⚠️ Bei EU darf "Nicht steuerbar" nicht aktiv sein.',
+          fix: () => clearTaxStatusFlags(),
+          fixLabel: 'Nicht steuerbar deaktivieren'
         });
       }
 
-      if (hasIGFlag && !isEUTaxRegion) {
-        const preferredIGFlag = taxStatus.igLieferung ? 'igLieferung' : 'igDreieck';
+      if (expectedTaxRegion === 'Non-EU' && (taxStatus.igLieferung || taxStatus.igDreieck)) {
         issues.push({
           type: 'error',
-          message: `⚠️ "IG Lieferung" bzw. "IG Dreiecksgeschäft" ist nur mit Tax Region "EU" erlaubt, aktuell aber "${taxRegion}".`,
-          fix: () => {
-            keepOnlyTaxStatusFlag(preferredIGFlag);
-            setTaxRegion('EU');
-          },
-          fixLabel: 'IG → EU'
+          message: '⚠️ Bei Non-EU dürfen "IG Lieferung" und "IG Dreiecksgeschäft" nicht aktiv sein.',
+          fix: () => keepOnlyTaxStatusFlag('nichtSteuerbar'),
+          fixLabel: 'IG deaktivieren'
         });
       }
 
-      if ((isAustriaTaxRegion || isGermanyTaxRegion) && activeTaxFlags.length > 0) {
+      if (clearAllFlagsOnConflict && activeTaxFlags.length > 0) {
         issues.push({
           type: 'error',
-          message: `⚠️ Bei Tax Region "${taxRegion}" darf keine der drei Steuer-Checkboxen aktiv sein.`,
+          message: `⚠️ Bei Tax Region "${expectedTaxRegion}" darf keine der drei Steuer-Checkboxen aktiv sein.`,
           fix: () => clearTaxStatusFlags(),
           fixLabel: 'Steuer-Checkboxen deaktivieren'
         });
