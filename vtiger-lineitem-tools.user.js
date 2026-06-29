@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger LineItem Tools (Unified)
 // @namespace    hw24.vtiger.lineitem.tools
-// @version      2.7.25
+// @version      2.7.26
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-lineitem-tools.user.js
 // @description  Unified LineItem tools: Meta Overlay, SN Reconciliation, Price Multiplier
@@ -15,7 +15,7 @@
 
   const HW24_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version)
     ? GM_info.script.version
-    : '2.7.25';
+    : '2.7.26';
   console.log('%c[HW24] vtiger-lineitem-tools v' + HW24_VERSION + ' loaded', 'color:#059669;font-weight:bold;font-size:14px');
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -1536,6 +1536,12 @@
     }
 
     const TAX_REGION_MAP = { 'eu': '12', 'non-eu': '13', 'germany': '14', 'germany (19%)': '14', 'austria': '15' };
+    const TAX_REGION_RATE_MAP = { 'eu': 0, 'non-eu': 0, 'germany': 19, 'germany (19%)': 19, 'austria': 20 };
+    const TAX_STATUS_FIELD_ALIASES = {
+      igLieferung: ['ig lieferung', 'innergemeinschaftliche lieferung'],
+      igDreieck: ['ig dreiecksgeschaeft', 'ig dreiecksgeschaft', 'ig dreiecksgesch\u00e4ft'],
+      nichtSteuerbar: ['nicht steuerbar']
+    };
 
     const NICHT_STEUERBAR_FIELDS = {
       'SalesOrder': 'cf_2282',
@@ -1610,41 +1616,107 @@
       }
     }
 
-    function findNichtSteuerbarCheckbox() {
-      const fieldName = NICHT_STEUERBAR_FIELDS[currentModule];
-      if (!fieldName) return null;
+    function normalizeTaxFieldText(text) {
+      return S(text)
+        .toLowerCase()
+        .replace(/[\u00e4]/g, 'ae')
+        .replace(/[\u00f6]/g, 'oe')
+        .replace(/[\u00fc]/g, 'ue')
+        .replace(/[\u00df]/g, 'ss')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
 
-      const selectors = [
-        `input[type="checkbox"][name="${fieldName}"]`,
-        `input[name="${fieldName}"]`,
-        `input[id*="_editView_fieldName_${fieldName}"]`
-      ];
+    function isTruthyCheckboxValue(value) {
+      return /^(1|true|on|yes)$/i.test(S(value));
+    }
 
-      for (const sel of selectors) {
-        const el = document.querySelector(sel);
-        if (el) return el;
+    function getCheckboxValue(el) {
+      if (!el) return false;
+      if (el.type === 'checkbox') return !!el.checked;
+      return isTruthyCheckboxValue(el.value);
+    }
+
+    function setCheckboxValue(el, value) {
+      if (!el) return false;
+      const target = !!value;
+
+      if (el.type === 'checkbox') {
+        if (el.checked !== target) {
+          el.click();
+        } else {
+          ['input', 'change', 'blur'].forEach(evt => el.dispatchEvent(new Event(evt, { bubbles: true })));
+        }
+        return true;
       }
+
+      el.value = target ? '1' : '0';
+      ['input', 'change', 'blur'].forEach(evt => el.dispatchEvent(new Event(evt, { bubbles: true })));
+      return true;
+    }
+
+    function findCheckboxByLabelAliases(aliases) {
+      const normalizedAliases = aliases.map(normalizeTaxFieldText);
+      const labelSelectors = 'label, td.fieldLabel, th.fieldLabel, .fieldLabel, [id*="_editView_fieldLabel_"]';
+      const labels = [...document.querySelectorAll(labelSelectors)];
+
+      const findCheckboxInContainer = container => {
+        if (!container) return null;
+        return container.querySelector('input[type="checkbox"], input[type="hidden"][name^="cf_"], input[name^="cf_"]');
+      };
+
+      for (const labelEl of labels) {
+        const labelText = normalizeTaxFieldText(labelEl.textContent);
+        if (!normalizedAliases.some(alias => labelText.includes(alias))) continue;
+
+        const control = labelEl.control || (labelEl.htmlFor ? document.getElementById(labelEl.htmlFor) : null);
+        if (control && (control.type === 'checkbox' || control.type === 'hidden')) return control;
+
+        const fromRow = findCheckboxInContainer(labelEl.closest('tr, .row, .form-group, .fieldBlockContainer, .fieldValue'));
+        if (fromRow) return fromRow;
+
+        const fromParent = findCheckboxInContainer(labelEl.parentElement);
+        if (fromParent) return fromParent;
+
+        const sibling = findCheckboxInContainer(labelEl.nextElementSibling) || findCheckboxInContainer(labelEl.previousElementSibling);
+        if (sibling) return sibling;
+      }
+
       return null;
     }
 
+    function findIGLieferungCheckbox() {
+      return findCheckboxByLabelAliases(TAX_STATUS_FIELD_ALIASES.igLieferung);
+    }
+
+    function findIGDreieckCheckbox() {
+      return findCheckboxByLabelAliases(TAX_STATUS_FIELD_ALIASES.igDreieck);
+    }
+
+    function findNichtSteuerbarCheckbox() {
+      const fieldName = NICHT_STEUERBAR_FIELDS[currentModule];
+      if (fieldName) {
+        const selectors = [
+          `input[type="checkbox"][name="${fieldName}"]`,
+          `input[name="${fieldName}"]`,
+          `input[id*="_editView_fieldName_${fieldName}"]`
+        ];
+
+        for (const sel of selectors) {
+          const el = document.querySelector(sel);
+          if (el) return el;
+        }
+      }
+
+      return findCheckboxByLabelAliases(TAX_STATUS_FIELD_ALIASES.nichtSteuerbar);
+    }
+
     function getNichtSteuerbar() {
-      const el = findNichtSteuerbarCheckbox();
-      if (!el) return false;
-      if (el.type === 'checkbox') return el.checked;
-      return el.value === '1' || el.value === 'on';
+      return getCheckboxValue(findNichtSteuerbarCheckbox());
     }
 
     function setNichtSteuerbar(value) {
-      const el = findNichtSteuerbarCheckbox();
-      if (!el) return false;
-      if (el.type === 'checkbox') {
-        el.checked = !!value;
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      } else {
-        el.value = value ? '1' : '0';
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      return true;
+      return setCheckboxValue(findNichtSteuerbarCheckbox(), value);
     }
 
     function getTaxRegion() {
@@ -1720,43 +1792,52 @@
       });
     }
 
-    function findReverseChargeCheckbox() {
-      const reverseChargeFields = ['cf_924', 'cf_928', 'cf_876'];
-      for (const fieldName of reverseChargeFields) {
-        const selectors = [
-          `input[type="checkbox"][name="${fieldName}"]`,
-          `input[name="${fieldName}"]`,
-          `input[type="checkbox"][data-fieldname="${fieldName}"]`,
-          `[data-name="${fieldName}"]`
-        ];
-        for (const sel of selectors) {
-          const el = document.querySelector(sel);
-          if (el && (el.type === 'checkbox' || el.type === 'hidden')) return el;
-        }
-      }
-      return null;
+    function getIGLieferung() {
+      return getCheckboxValue(findIGLieferungCheckbox());
     }
 
-    function getReverseCharge() {
-      const el = findReverseChargeCheckbox();
-      if (!el) return false;
-      if (el.type === 'checkbox') return el.checked;
-      if (el.type === 'hidden') return el.value === '1' || el.value === 'on' || el.value === 'true';
-      return false;
+    function setIGLieferung(value) {
+      return setCheckboxValue(findIGLieferungCheckbox(), value);
     }
 
-    function setReverseCharge(value) {
-      const el = findReverseChargeCheckbox();
-      if (!el) return false;
-      if (el.type === 'checkbox') {
-        el.checked = !!value;
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        if (!value && el.checked) el.click();
-      } else if (el.type === 'hidden') {
-        el.value = value ? '1' : '0';
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }
+    function getIGDreieck() {
+      return getCheckboxValue(findIGDreieckCheckbox());
+    }
+
+    function setIGDreieck(value) {
+      return setCheckboxValue(findIGDreieckCheckbox(), value);
+    }
+
+    function getTaxStatusState() {
+      return {
+        igLieferung: getIGLieferung(),
+        igDreieck: getIGDreieck(),
+        nichtSteuerbar: getNichtSteuerbar()
+      };
+    }
+
+    function setTaxStatusState(nextState = {}) {
+      const state = {
+        igLieferung: !!nextState.igLieferung,
+        igDreieck: !!nextState.igDreieck,
+        nichtSteuerbar: !!nextState.nichtSteuerbar
+      };
+      setIGLieferung(state.igLieferung);
+      setIGDreieck(state.igDreieck);
+      setNichtSteuerbar(state.nichtSteuerbar);
       return true;
+    }
+
+    function clearTaxStatusFlags() {
+      return setTaxStatusState({ igLieferung: false, igDreieck: false, nichtSteuerbar: false });
+    }
+
+    function keepOnlyTaxStatusFlag(flagName) {
+      return setTaxStatusState({
+        igLieferung: flagName === 'igLieferung',
+        igDreieck: flagName === 'igDreieck',
+        nichtSteuerbar: flagName === 'nichtSteuerbar'
+      });
     }
 
     function getSubject() {
@@ -1786,9 +1867,7 @@
 
       const billingCountry = getBillingCountry();
       const taxRegion = getTaxRegion();
-      const reverseChargeFieldExists = !!findReverseChargeCheckbox();
-      const reverseCharge = reverseChargeFieldExists ? getReverseCharge() : false;
-      const nichtSteuerbar = getNichtSteuerbar();
+      const taxStatus = getTaxStatusState();
       const subjectType = getSubjectType();
       const isPurchaseOrderModule = currentModule === 'PurchaseOrder';
       const vatNumber = isPurchaseOrderModule ? '' : await fetchOrganizationVAT();
@@ -1801,6 +1880,8 @@
       const isGermanyTaxRegion = taxRegionLower.includes('germany');
       const isEUTaxRegion = taxRegionLower === 'eu';
       const isNonEUTaxRegion = taxRegionLower.includes('non-eu');
+      const activeTaxFlags = Object.entries(taxStatus).filter(([, active]) => active).map(([name]) => name);
+      const hasIGFlag = taxStatus.igLieferung || taxStatus.igDreieck;
 
       const billingIsAustria = isAustria(billingCountry);
       const billingIsGermany = isGermany(billingCountry);
@@ -1808,7 +1889,7 @@
       const billingIsNonEU = billingCountry && !billingIsAustria && !billingIsGermany && !billingIsEU;
 
       // ═══════════════════════════════════════════════════════════════
-      // REGEL 1: Österreich → 20% (Austria), kein RC, kein Nicht-steuerbar
+      // REGEL 1: Österreich → 20% (Austria), keine Steuer-Checkbox aktiv
       // ═══════════════════════════════════════════════════════════════
       if (billingIsAustria) {
         if (!isAustriaTaxRegion && taxRegion) {
@@ -1819,28 +1900,20 @@
             fixLabel: 'Tax Region → Austria'
           });
         }
-        if (reverseChargeFieldExists && reverseCharge) {
+        if (activeTaxFlags.length > 0) {
           issues.push({
             type: 'error',
-            message: '⚠️ Reverse Charge darf bei österreichischen Kunden nicht aktiviert sein.',
-            fix: () => setReverseCharge(false),
-            fixLabel: 'RC deaktivieren'
-          });
-        }
-        if (nichtSteuerbar) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ "Nicht steuerbar" darf bei österreichischen Kunden nicht aktiviert sein.',
-            fix: () => setNichtSteuerbar(false),
-            fixLabel: 'Nicht steuerbar deaktivieren'
+            message: '⚠️ Bei österreichischen Kunden darf keine der Checkboxen "IG Lieferung", "IG Dreiecksgeschäft" oder "Nicht steuerbar" aktiv sein.',
+            fix: () => clearTaxStatusFlags(),
+            fixLabel: 'Steuer-Checkboxen deaktivieren'
           });
         }
       }
 
       // ═══════════════════════════════════════════════════════════════
       // REGEL 2: DE/EU
-      // PurchaseOrder: UID ist irrelevant → immer EU + RC aktiv
-      // Andere Module: mit UID → EU + RC aktiv, ohne UID → Austria + kein RC
+      // PurchaseOrder: UID ist irrelevant → immer EU
+      // Andere Module: mit UID → EU, ohne UID → Austria
       // ═══════════════════════════════════════════════════════════════
       else if (billingIsGermany || billingIsEU) {
         if (isPurchaseOrderModule) {
@@ -1852,15 +1925,7 @@
               fixLabel: 'Tax Region → EU'
             });
           }
-          if (reverseChargeFieldExists && !reverseCharge) {
-            issues.push({
-              type: 'error',
-              message: '⚠️ Purchase Order (DE/EU) → Reverse Charge muss aktiviert sein (UID irrelevant).',
-              fix: () => setReverseCharge(true),
-              fixLabel: 'RC aktivieren'
-            });
-          }
-          if (nichtSteuerbar) {
+          if (taxStatus.nichtSteuerbar) {
             issues.push({
               type: 'error',
               message: '⚠️ "Nicht steuerbar" darf bei Purchase Order (DE/EU) nicht aktiviert sein.',
@@ -1870,7 +1935,7 @@
           }
         }
 
-        // MIT UID → EU Tax Region, RC aktivieren
+        // MIT UID → EU Tax Region
         else if (hasVAT) {
           if (!isEUTaxRegion && taxRegion) {
             issues.push({
@@ -1880,15 +1945,7 @@
               fixLabel: 'Tax Region → EU'
             });
           }
-          if (reverseChargeFieldExists && !reverseCharge) {
-            issues.push({
-              type: 'error',
-              message: `⚠️ EU-Kunde mit UID (${vatNumber}) → Reverse Charge muss aktiviert sein.`,
-              fix: () => setReverseCharge(true),
-              fixLabel: 'RC aktivieren'
-            });
-          }
-          if (nichtSteuerbar) {
+          if (taxStatus.nichtSteuerbar) {
             issues.push({
               type: 'error',
               message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden mit UID nicht aktiviert sein.',
@@ -1898,7 +1955,7 @@
           }
         }
 
-        // OHNE UID → 20% (Austria), kein RC
+        // OHNE UID → 20% (Austria), keine Steuer-Checkbox aktiv
         else {
           if (!isAustriaTaxRegion && taxRegion) {
             issues.push({
@@ -1908,20 +1965,12 @@
               fixLabel: 'Tax Region → Austria'
             });
           }
-          if (reverseChargeFieldExists && reverseCharge) {
+          if (activeTaxFlags.length > 0) {
             issues.push({
               type: 'error',
-              message: '⚠️ Reverse Charge darf bei EU-Kunden ohne UID nicht aktiviert sein.',
-              fix: () => setReverseCharge(false),
-              fixLabel: 'RC deaktivieren'
-            });
-          }
-          if (nichtSteuerbar) {
-            issues.push({
-              type: 'error',
-              message: '⚠️ "Nicht steuerbar" darf bei EU-Kunden ohne UID nicht aktiviert sein.',
-              fix: () => setNichtSteuerbar(false),
-              fixLabel: 'Nicht steuerbar deaktivieren'
+              message: '⚠️ EU-Kunde ohne UID → keine der drei Steuer-Checkboxen darf aktiv sein.',
+              fix: () => clearTaxStatusFlags(),
+              fixLabel: 'Steuer-Checkboxen deaktivieren'
             });
           }
         }
@@ -1939,20 +1988,12 @@
             fixLabel: 'Tax Region → Non-EU'
           });
         }
-        if (!nichtSteuerbar) {
+        if (!taxStatus.nichtSteuerbar) {
           issues.push({
             type: 'error',
             message: '⚠️ Drittland + Wartung → "Nicht steuerbar" muss aktiviert sein.',
-            fix: () => setNichtSteuerbar(true),
+            fix: () => keepOnlyTaxStatusFlag('nichtSteuerbar'),
             fixLabel: 'Nicht steuerbar aktivieren'
-          });
-        }
-        if (reverseChargeFieldExists && reverseCharge) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ Reverse Charge ist bei Drittland-Kunden nicht anwendbar.',
-            fix: () => setReverseCharge(false),
-            fixLabel: 'RC deaktivieren'
           });
         }
       }
@@ -1969,14 +2010,59 @@
             fixLabel: 'Tax Region → Non-EU'
           });
         }
-        if (reverseChargeFieldExists && reverseCharge) {
-          issues.push({
-            type: 'error',
-            message: '⚠️ Reverse Charge ist bei Drittland-Kunden nicht anwendbar.',
-            fix: () => setReverseCharge(false),
-            fixLabel: 'RC deaktivieren'
-          });
-        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // REGEL 6: Steuer-Checkboxen sind gegenseitig exklusiv
+      // ═══════════════════════════════════════════════════════════════
+      if (activeTaxFlags.length > 1) {
+        const preferredFlag = isNonEUTaxRegion
+          ? 'nichtSteuerbar'
+          : (taxStatus.igLieferung ? 'igLieferung' : 'igDreieck');
+
+        issues.push({
+          type: 'error',
+          message: '⚠️ Es darf maximal eine der Checkboxen "IG Lieferung", "IG Dreiecksgeschäft" oder "Nicht steuerbar" aktiv sein.',
+          fix: () => keepOnlyTaxStatusFlag(preferredFlag),
+          fixLabel: 'Steuer-Checkboxen bereinigen'
+        });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // REGEL 7: Checkboxen müssen zur Tax Region passen
+      // ═══════════════════════════════════════════════════════════════
+      if (taxStatus.nichtSteuerbar && !isNonEUTaxRegion) {
+        issues.push({
+          type: 'error',
+          message: `⚠️ "Nicht steuerbar" ist nur mit Tax Region "Non-EU" erlaubt, aktuell aber "${taxRegion}".`,
+          fix: () => {
+            keepOnlyTaxStatusFlag('nichtSteuerbar');
+            setTaxRegion('Non-EU');
+          },
+          fixLabel: 'Nicht steuerbar → Non-EU'
+        });
+      }
+
+      if (hasIGFlag && !isEUTaxRegion) {
+        const preferredIGFlag = taxStatus.igLieferung ? 'igLieferung' : 'igDreieck';
+        issues.push({
+          type: 'error',
+          message: `⚠️ "IG Lieferung" bzw. "IG Dreiecksgeschäft" ist nur mit Tax Region "EU" erlaubt, aktuell aber "${taxRegion}".`,
+          fix: () => {
+            keepOnlyTaxStatusFlag(preferredIGFlag);
+            setTaxRegion('EU');
+          },
+          fixLabel: 'IG → EU'
+        });
+      }
+
+      if ((isAustriaTaxRegion || isGermanyTaxRegion) && activeTaxFlags.length > 0) {
+        issues.push({
+          type: 'error',
+          message: `⚠️ Bei Tax Region "${taxRegion}" darf keine der drei Steuer-Checkboxen aktiv sein.`,
+          fix: () => clearTaxStatusFlags(),
+          fixLabel: 'Steuer-Checkboxen deaktivieren'
+        });
       }
 
       return issues.length > 0 ? issues : null;
@@ -2000,7 +2086,7 @@
       });
 
       popup.innerHTML = `
-        <div style="background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%);color:#fff;padding:16px 20px;border-radius:12px 12px 0 0;font-weight:bold;font-size:15px;">🚨 Tax / Reverse Charge Warnung</div>
+        <div style="background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%);color:#fff;padding:16px 20px;border-radius:12px 12px 0 0;font-weight:bold;font-size:15px;">🚨 Tax / Checkbox Warnung</div>
         <div style="padding:20px;">
           <p style="margin:0 0 16px 0;color:#374151;font-size:13px;">Es wurden folgende Probleme gefunden:</p>
           ${issuesHtml}
@@ -2026,7 +2112,123 @@
 
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+    function getExpectedTaxRate(regionName) {
+      const key = S(regionName).toLowerCase();
+      if (!key) return null;
+      if (Object.prototype.hasOwnProperty.call(TAX_REGION_RATE_MAP, key)) return TAX_REGION_RATE_MAP[key];
+      if (key.includes('austria')) return 20;
+      if (key.includes('germany')) return 19;
+      if (key.includes('non-eu') || key === 'eu') return 0;
+      return null;
+    }
+
+    function getTaxFieldKey(el) {
+      return [el?.name || '', el?.id || '', el?.getAttribute?.('data-fieldname') || ''].join(' ').toLowerCase();
+    }
+
+    function getLikelyTaxPercentageFields() {
+      const all = [...document.querySelectorAll('input[name],input[id],select[name],select[id]')];
+      return all.filter(el => {
+        const key = getTaxFieldKey(el);
+        if (!key || key.includes('region_id')) return false;
+        return /(tax\d+_percentage|hiddentax\d+_percentage|tax\d+percent|tax.*percent|tax.*rate|vat.*percent)/i.test(key);
+      });
+    }
+
+    function captureTaxFieldSnapshot() {
+      const fields = getLikelyTaxPercentageFields();
+      if (!fields.length) return '';
+      return fields.map(el => `${el.name || el.id}:${el.value}`).join('|');
+    }
+
+    function normalizeTaxRateValue(value) {
+      const normalized = S(value).replace(',', '.').trim();
+      if (!normalized) return null;
+      const numeric = Number.parseFloat(normalized);
+      return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    function formatTaxRateValue(targetRate, currentValue) {
+      const current = S(currentValue).trim();
+      if (!current) return String(targetRate);
+      if (current.includes(',')) {
+        const decimals = (current.split(',')[1] || '').length;
+        return decimals ? targetRate.toFixed(decimals).replace('.', ',') : String(targetRate).replace('.', ',');
+      }
+      if (current.includes('.')) {
+        const decimals = (current.split('.')[1] || '').length;
+        return decimals ? targetRate.toFixed(decimals) : String(targetRate);
+      }
+      return String(targetRate);
+    }
+
+    function forceTaxPercentageFields(regionName) {
+      const targetRate = getExpectedTaxRate(regionName);
+      if (targetRate === null) return false;
+
+      let changed = false;
+      getLikelyTaxPercentageFields().forEach(el => {
+        const currentRate = normalizeTaxRateValue(el.value);
+        if (currentRate !== null && ![0, 19, 20].includes(currentRate)) return;
+
+        const nextValue = formatTaxRateValue(targetRate, el.value);
+        if (el.value === nextValue) return;
+
+        el.value = nextValue;
+        ['input', 'change', 'blur'].forEach(evt => el.dispatchEvent(new Event(evt, { bubbles: true })));
+        changed = true;
+      });
+
+      return changed;
+    }
+
+    async function waitForJQueryIdle(maxWait = 1800) {
+      const jq = window.jQuery || window.$;
+      if (!jq) return;
+
+      const start = Date.now();
+      while (Date.now() - start < maxWait) {
+        if (!jq.active) return;
+        await sleep(100);
+      }
+    }
+
+    async function syncTaxRegionBeforeSave({ previousSnapshot = null, force = false } = {}) {
+      const regionEl = document.querySelector('#region_id');
+      const regionName = getTaxRegion();
+      if (!regionEl || !regionName) return;
+
+      const beforeSnapshot = previousSnapshot ?? captureTaxFieldSnapshot();
+      let snapshotChanged = !beforeSnapshot;
+
+      for (const delay of [0, 150, 350, 700, 1200, 1800]) {
+        if (delay) await sleep(delay);
+        triggerTaxRegionRecalculation(regionEl);
+        await waitForJQueryIdle();
+
+        const currentSnapshot = captureTaxFieldSnapshot();
+        if (!beforeSnapshot || (currentSnapshot && currentSnapshot !== beforeSnapshot)) {
+          snapshotChanged = true;
+          break;
+        }
+      }
+
+      if ((force || !snapshotChanged) && forceTaxPercentageFields(regionName)) {
+        await sleep(120);
+        triggerTaxRegionRecalculation(regionEl);
+        await waitForJQueryIdle();
+      }
+
+      await sleep(250);
+    }
+
+    async function saveWithTaxSync(btn, options = {}) {
+      await syncTaxRegionBeforeSave(options);
+      triggerSave(btn);
+    }
+
     async function applyIssuesAndSave(issues, btn) {
+      const taxSnapshotBefore = captureTaxFieldSnapshot();
       const taxRegionBefore = getTaxRegion();
       let touchedTaxRegion = false;
 
@@ -2037,17 +2239,11 @@
 
       const taxRegionAfter = getTaxRegion();
       if (touchedTaxRegion || (taxRegionBefore && taxRegionAfter && taxRegionBefore !== taxRegionAfter)) {
-        const regionEl = document.querySelector('#region_id');
-        if (regionEl) {
-          for (const delay of [0, 120, 350, 800]) {
-            if (delay) await sleep(delay);
-            triggerTaxRegionRecalculation(regionEl);
-          }
-          await sleep(450);
-        }
+        await saveWithTaxSync(btn, { previousSnapshot: taxSnapshotBefore, force: true });
+        return;
       }
 
-      triggerSave(btn);
+      await saveWithTaxSync(btn, { previousSnapshot: taxSnapshotBefore });
     }
 
     function interceptSaveButton() {
@@ -2067,12 +2263,12 @@
           const issues = await validateTaxSettings();
           if (issues && issues.length > 0) {
             showTaxValidationPopup(issues,
-              () => { applyIssuesAndSave(issues, btn); },
-              () => { triggerSave(btn); }
+              () => { void applyIssuesAndSave(issues, btn); },
+              () => { void saveWithTaxSync(btn); }
             );
           } else {
             // No issues, proceed with save
-            triggerSave(btn);
+            void saveWithTaxSync(btn);
           }
         }, true);
       });
