@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTiger Provider Tools
 // @namespace    hw24.vtiger.provider.tools
-// @version      1.6.6
+// @version      1.6.7
 // @updateURL    https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @downloadURL  https://raw.githubusercontent.com/HWW24-Office/vtiger-userscripts/main/vtiger-provider-tools.user.js
 // @description  Provider- & Händler-Anfragen: Vorbereitungs-Buttons für E-Mails auf Potentials
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const HW24_VERSION = '1.6.6';
+  const HW24_VERSION = '1.6.7';
 
   /* ═══════════════════════════════════════════════════════════════════════════
      MODULE / VIEW GUARD
@@ -52,6 +52,21 @@
     return new Promise(r => setTimeout(r, ms));
   }
 
+  function normalizeEmailList(value) {
+    if (Array.isArray(value)) {
+      return value.map(v => String(v || '').trim()).filter(Boolean);
+    }
+    if (!value) return [];
+    return String(value)
+      .split(/[;,]+/)
+      .map(v => v.trim())
+      .filter(Boolean);
+  }
+
+  function emailListToString(value) {
+    return normalizeEmailList(value).join('; ');
+  }
+
   /* ═══════════════════════════════════════════════════════════════════════════
      PROVIDER CONFIGURATION
      ═══════════════════════════════════════════════════════════════════════════
@@ -61,7 +76,7 @@
 
   const PROVIDERS = [
     { key: 'TG',    label: 'Evernex',    to: 'R.Voelzke@technogroup.com',  cc: '',                               greeting: 'Hallo Ronny,',       style: 'du',  lang: 'de' },
-    { key: 'CC',    label: 'Axians',     to: 'sales-itinfra@axians.de',    cc: 'niklas.spranz@axians.de; Michael.kienzle@axians.de', greeting: 'Hallo Sales Team,',  style: 'du',  lang: 'de',
+    { key: 'CC',    label: 'Axians',     to: 'sales-itinfra@axians.de',    cc: ['niklas.spranz@axians.de', 'Michael.kienzle@axians.de'], greeting: 'Hallo Sales Team,',  style: 'du',  lang: 'de',
                                                                                                                    greetingSie: 'Hallo Sales Team,', hasSieToggle: true },
     { key: 'PP',    label: 'Park Place', to: 'jchiaju@parkplacetech.com',  cc: 'partnersales@parkplacetech.com', greeting: 'Hallo Justine,',     style: 'du',  lang: 'de' },
     { key: 'ITRIS', label: 'ITRIS',      to: 'kkroner@itris.de',           cc: '',                               greeting: 'Hallo Katrin,',      style: 'du',  lang: 'de' },
@@ -1622,7 +1637,9 @@
 
     const jq = window.jQuery || window.$;
     const toLower = (provider?.to || '').toLowerCase();
-    const ccLower = (provider?.cc || '').toLowerCase();
+    const ccList = normalizeEmailList(provider?.cc);
+    const ccValue = emailListToString(provider?.cc);
+    const ccLower = ccValue.toLowerCase();
 
     const isToKey = (key) => /(^|_)(to|toemail|toemailids|to_email|emailfield)(_|$)/.test(key) && !/(cc|bcc)/.test(key);
     const isCcKey = (key) => /(^|_)(cc|ccemail|ccemailids|cc_email|ccemailfield)(_|$)/.test(key);
@@ -1686,15 +1703,15 @@
 
     // 5) Prefill CC if configured; otherwise keep CC empty
     for (const input of ccCandidates) {
-      input.value = ccLower ? provider.cc : '';
+      input.value = ccLower ? ccValue : '';
       fire(input);
       if (jq) {
         try {
           const $input = jq(input);
           if ($input.data('select2')) {
-            $input.select2('data', ccLower ? [{ id: provider.cc, text: provider.cc }] : []);
+            $input.select2('data', ccList.map(email => ({ id: email, text: email })));
           } else {
-            $input.val(ccLower ? provider.cc : '').trigger('change');
+            $input.val(ccLower ? ccValue : '').trigger('change');
           }
         } catch { /* ignore */ }
       }
@@ -1843,6 +1860,7 @@
     console.log('[HW24 Provider] Step2: Setting recipients...');
 
     const jq = window.jQuery || window.$;
+    const ccList = normalizeEmailList(provider.cc);
 
     // --- FROM: Set to office@hardwarewartung.com ---
     setFromEmail(container);
@@ -1851,7 +1869,7 @@
     _clearAndSetToField(container, jq, provider.to);
 
     // --- CC: Set if provider has CC ---
-    if (provider.cc) {
+    if (ccList.length) {
       setTimeout(() => {
         // Make CC visible first — find "Add Cc" link/button
         const allClickables = [...container.querySelectorAll('a, button, span')];
@@ -1863,7 +1881,7 @@
           }
         }
         setTimeout(() => {
-          _addEmailToField(container, jq, 'cc', provider.cc);
+          _addEmailListToField(container, jq, 'cc', ccList);
         }, 400);
       }, 600);
     }
@@ -2089,6 +2107,15 @@
     }
 
     console.warn('[HW24 Provider] Step2: Could not add', field, '=', email);
+  }
+
+  function _addEmailListToField(container, jq, field, emails) {
+    const list = normalizeEmailList(emails);
+    list.forEach((email, index) => {
+      setTimeout(() => {
+        _addEmailToField(container, jq, field, email);
+      }, index * 700);
+    });
   }
 
   async function ensureToRecipient(container, provider, maxAttempts = 5) {
