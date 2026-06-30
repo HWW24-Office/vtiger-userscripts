@@ -61,8 +61,8 @@
 
   const PROVIDERS = [
     { key: 'TG',    label: 'Evernex',    to: 'R.Voelzke@technogroup.com',  cc: '',                               greeting: 'Hallo Ronny,',       style: 'du',  lang: 'de' },
-    { key: 'CC',    label: 'Axians',     to: 'Michael.kienzle@axians.de',  cc: 'niklas.spranz@axians.de',        greeting: 'Hallo Michael,',     style: 'du',  lang: 'de',
-                                                                                                                   greetingSie: 'Hallo Herr Kienzle,', hasSieToggle: true },
+    { key: 'CC',    label: 'Axians',     to: 'sales-itinfra@axians.de',    cc: 'niklas.spranz@axians.de; Michael.kienzle@axians.de', greeting: 'Hallo Sales Team,',  style: 'du',  lang: 'de',
+                                                                                                                   greetingSie: 'Hallo Sales Team,', hasSieToggle: true },
     { key: 'PP',    label: 'Park Place', to: 'jchiaju@parkplacetech.com',  cc: 'partnersales@parkplacetech.com', greeting: 'Hallo Justine,',     style: 'du',  lang: 'de' },
     { key: 'ITRIS', label: 'ITRIS',      to: 'kkroner@itris.de',           cc: '',                               greeting: 'Hallo Katrin,',      style: 'du',  lang: 'de' },
     { key: 'DIS',   label: 'DIS',        to: 'anfragen@dis-daten-it.de',   cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de',
