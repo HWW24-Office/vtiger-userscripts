@@ -344,9 +344,9 @@
       ]
     }
   ],
-  "last_checked_at": "2026-03-24",
+  "last_checked_at": "2026-07-01",
   "source_reachable": true,
-  "source_hash": "899b0cef3d00158464fabbc471d65aa82b7527fcb7163f37d64dc98f63224bd7",
-  "source_changed_at": "2026-03-24",
+  "source_hash": "e0ed946eb8d4fba2c4734a2fd79b8d64e55345fb2ff6ea2ecf14094a45576093",
+  "source_changed_at": "2026-07-01",
   "refresh_note": "Source content changed; please review and refresh extracted brand/model lists."
 }
