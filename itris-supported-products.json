@@ -200,9 +200,9 @@
       ]
     }
   ],
-  "last_checked_at": "2026-03-24",
+  "last_checked_at": "2026-07-01",
   "source_reachable": true,
-  "source_hash": "c0a20df1d551ef92beae38fb015b6f0988075079fcb184ff38655adf4dc2eb81",
-  "source_changed_at": "2026-03-24",
-  "refresh_note": "Initial source checksum recorded."
+  "source_hash": "095adf2d0171ff6dd6da1c6cc61583a691a3a7061b02c5ab0b7fb8ed30914e09",
+  "source_changed_at": "2026-07-01",
+  "refresh_note": "Source content changed; please review and refresh extracted brand/model lists."
 }
