@@ -83,7 +83,7 @@
     { key: 'DIS',   label: 'DIS',        to: 'anfragen@dis-daten-it.de',   cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de',
                                                                                                                    greetingSie: 'Hallo Team,', hasSieToggle: true },
     { key: 'IDS',   label: 'IDS',        to: 'o.hermann@idsgmbh.com',      cc: '',                               greeting: 'Hallo Olga,',        style: 'du',  lang: 'de' },
-    { key: 'Nordic', label: 'Nordic',    to: 'ksp@nordiccomputer.com',     cc: '',                               greeting: 'Hello Kevon,',       style: 'du',  lang: 'en' },
+    { key: 'Nordic', label: 'Nordic',    to: 'channelsales@nordiccomputer.com',     cc: '',                               greeting: 'Hello Team,',       style: 'du',  lang: 'en' },
     { key: 'TDS',   label: 'TD Synnex',  to: 'Sales.at@tdsynnex.com',      cc: '',                               greeting: 'Hallo Team,',        style: 'du',  lang: 'de',
                                                                                                                    greetingSie: 'Hallo Team,', hasSieToggle: true },
   ];
@@ -95,7 +95,7 @@
      ═══════════════════════════════════════════════════════════════════════════ */
 
   const DEALERS = [
-    { key: 'Nordic',    label: 'Nordic',     to: 'ksp@nordiccomputer.com',                   cc: '',                greeting: 'Hello Kevon,',           style: 'du',  lang: 'en' },
+    { key: 'Nordic',    label: 'Nordic',     to: 'channelsales@nordiccomputer.com',                   cc: '',                greeting: 'Hello Team,',           style: 'du',  lang: 'en' },
     { key: 'Epoka',     label: 'Epoka',      to: 'aly@epoka.com',                            cc: 'Sales@epoka.com', greeting: 'Hallo Andrej,',          style: 'du',  lang: 'de' },
     { key: 'Techbuyer', label: 'Techbuyer',  to: 'n.sinatra@techbuyer.com',                  cc: '',                greeting: 'Hallo Nino,',            style: 'du',  lang: 'de' },
     { key: 'FlexIT',    label: 'FlexIT',     to: 'silvia.zeljenkova@flexitdistribution.com', cc: '',                greeting: 'Hallo Frau Zeljenkova,', style: 'sie', lang: 'de' },
